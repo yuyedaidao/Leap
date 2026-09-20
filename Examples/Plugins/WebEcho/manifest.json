@@ -1,0 +1,11 @@
+{
+  "id": "com.padding.leap.web-echo",
+  "name": "Web Echo",
+  "version": "1.0.0",
+  "runtime": "javascript",
+  "entry": "main.js",
+  "webEntry": "index.html",
+  "commands": [
+    { "id": "web.echo", "title": "Web Echo" }
+  ]
+}

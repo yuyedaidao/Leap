@@ -1,0 +1,10 @@
+{
+  "id": "com.padding.leap.python-echo",
+  "name": "Python Echo",
+  "version": "1.0.0",
+  "runtime": "python",
+  "entry": "main.py",
+  "commands": [
+    { "id": "python.echo", "title": "Python Echo" }
+  ]
+}

@@ -1,0 +1,9 @@
+.DS_Store
+Derived/
+Tuist/Derived/
+Leap.xcodeproj/
+Leap.xcworkspace/
+build/
+.runtime-cache/
+Resources/Leap/Runtimes/node-*/
+Resources/Leap/Runtimes/python-*/

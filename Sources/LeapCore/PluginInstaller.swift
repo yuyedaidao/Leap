@@ -1,0 +1,130 @@
+import CryptoKit
+import Foundation
+import OSLog
+
+public struct PluginTrustRecord: Codable, Equatable, Sendable {
+    public let pluginID: String
+    public let version: String
+    public let contentDigest: String
+}
+
+public struct PluginInstallCandidate: Equatable, Sendable {
+    public let sourceDirectory: URL
+    public let manifest: PluginManifest
+    public let contentDigest: String
+}
+
+public struct PluginInstaller {
+    public enum InstallationError: LocalizedError {
+        case confirmationRequired
+        case managedDirectoryEscape
+
+        public var errorDescription: String? {
+            switch self {
+            case .confirmationRequired: "插件内容尚未获得确认。"
+            case .managedDirectoryEscape: "受管插件目录不安全。"
+            }
+        }
+    }
+
+    private static let logger = Logger(subsystem: "com.padding.leap", category: "plugin-installer")
+
+    public let paths: AppPaths
+    private let manifestValidator = PluginManifestValidator()
+
+    public init(paths: AppPaths) {
+        self.paths = paths
+    }
+
+    public func inspect(sourceDirectory: URL, fileManager: FileManager = .default) throws -> PluginInstallCandidate {
+        let manifest = try manifestValidator.load(from: sourceDirectory, fileManager: fileManager)
+        return PluginInstallCandidate(
+            sourceDirectory: sourceDirectory.standardizedFileURL,
+            manifest: manifest,
+            contentDigest: try contentDigest(of: sourceDirectory, fileManager: fileManager)
+        )
+    }
+
+    public func requiresConfirmation(
+        for candidate: PluginInstallCandidate,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        guard let record = try? readTrustRecord(for: candidate.manifest.id, fileManager: fileManager) else {
+            return true
+        }
+        return record.version != candidate.manifest.version || record.contentDigest != candidate.contentDigest
+    }
+
+    @discardableResult
+    public func install(
+        _ candidate: PluginInstallCandidate,
+        confirmed: Bool,
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        guard confirmed || !requiresConfirmation(for: candidate, fileManager: fileManager) else {
+            throw InstallationError.confirmationRequired
+        }
+
+        try paths.createManagedDirectories(fileManager: fileManager)
+        let destination = try paths.managedPluginDirectory(for: candidate.manifest.id)
+        guard destination.deletingLastPathComponent().standardizedFileURL == paths.pluginsDirectory.standardizedFileURL else {
+            throw InstallationError.managedDirectoryEscape
+        }
+
+        let stagingDirectory = paths.pluginsDirectory
+            .appendingPathComponent(".staging-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: stagingDirectory) }
+
+        try fileManager.copyItem(at: candidate.sourceDirectory, to: stagingDirectory)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.moveItem(at: stagingDirectory, to: destination)
+
+        let record = PluginTrustRecord(
+            pluginID: candidate.manifest.id,
+            version: candidate.manifest.version,
+            contentDigest: candidate.contentDigest
+        )
+        let recordURL = paths.trustRecordsDirectory.appendingPathComponent("\(candidate.manifest.id).json")
+        try JSONEncoder().encode(record).write(to: recordURL, options: .atomic)
+        Self.logger.info("已安装受管插件：\(candidate.manifest.id, privacy: .public)。")
+        return destination
+    }
+
+    public func readTrustRecord(for pluginID: String, fileManager: FileManager = .default) throws -> PluginTrustRecord? {
+        let recordURL = paths.trustRecordsDirectory.appendingPathComponent("\(pluginID).json")
+        guard fileManager.fileExists(atPath: recordURL.path) else {
+            return nil
+        }
+        return try JSONDecoder().decode(PluginTrustRecord.self, from: Data(contentsOf: recordURL))
+    }
+
+    public func contentDigest(of directory: URL, fileManager: FileManager = .default) throws -> String {
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return SHA256.hash(data: Data()).hexadecimalRepresentation
+        }
+
+        let files = enumerator.compactMap { $0 as? URL }
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+            .sorted { $0.path < $1.path }
+
+        var digest = SHA256()
+        for file in files {
+            let relativePath = file.path.replacingOccurrences(of: directory.standardizedFileURL.path + "/", with: "")
+            digest.update(data: Data(relativePath.utf8))
+            digest.update(data: try Data(contentsOf: file))
+        }
+        return digest.finalize().hexadecimalRepresentation
+    }
+}
+
+private extension SHA256.Digest {
+    var hexadecimalRepresentation: String {
+        map { String(format: "%02x", $0) }.joined()
+    }
+}

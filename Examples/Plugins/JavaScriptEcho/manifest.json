@@ -1,0 +1,10 @@
+{
+  "id": "com.padding.leap.javascript-echo",
+  "name": "JavaScript Echo",
+  "version": "1.0.0",
+  "runtime": "javascript",
+  "entry": "main.js",
+  "commands": [
+    { "id": "javascript.echo", "title": "JavaScript Echo" }
+  ]
+}
