@@ -1,6 +1,7 @@
 .DS_Store
 Derived/
 Tuist/Derived/
+Tuist/.build/
 Leap.xcodeproj/
 Leap.xcworkspace/
 build/

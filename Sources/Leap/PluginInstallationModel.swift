@@ -1,12 +1,12 @@
 import Foundation
 import LeapCore
 import Observation
-import OSLog
+import YQLogger
 
 @MainActor
 @Observable
 final class PluginInstallationModel {
-    private static let logger = Logger(subsystem: "com.padding.leap", category: "plugin-installation-ui")
+    private static let logger = YQLogger(label: "com.padding.leap/plugin-installation-ui")
 
     private let installer: PluginInstaller
     private let didInstall: () -> Void
@@ -39,7 +39,7 @@ final class PluginInstallationModel {
             } else if isSecurityScoped {
                 directory.stopAccessingSecurityScopedResource()
             }
-            Self.logger.error("无法检查插件目录：\(error.localizedDescription, privacy: .public)。")
+            Self.logger.error("无法检查插件目录：\(error.localizedDescription)。")
             errorMessage = error.localizedDescription
         }
     }
@@ -51,7 +51,7 @@ final class PluginInstallationModel {
         do {
             try install(candidate, confirmed: true)
         } catch {
-            Self.logger.error("插件安装失败：\(error.localizedDescription, privacy: .public)。")
+            Self.logger.error("插件安装失败：\(error.localizedDescription)。")
             errorMessage = error.localizedDescription
         }
     }
@@ -63,7 +63,7 @@ final class PluginInstallationModel {
     }
 
     func inspectFailure(_ error: Error) {
-        Self.logger.error("插件目录选择失败：\(error.localizedDescription, privacy: .public)。")
+        Self.logger.error("插件目录选择失败：\(error.localizedDescription)。")
         errorMessage = error.localizedDescription
     }
 

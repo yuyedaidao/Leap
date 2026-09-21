@@ -1,6 +1,6 @@
 @preconcurrency import Carbon.HIToolbox
 import Foundation
-import OSLog
+import YQLogger
 
 @MainActor
 final class GlobalHotKey {
@@ -15,7 +15,7 @@ final class GlobalHotKey {
         }
     }
 
-    private static let logger = Logger(subsystem: "com.padding.leap", category: "global-hotkey")
+    private static let logger = YQLogger(label: "com.padding.leap/global-hotkey")
     private static let eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
     private static let handler: EventHandlerUPP = { _, _, userData in
         guard let userData else {
@@ -48,7 +48,7 @@ final class GlobalHotKey {
         }
     }
 
-    func registerOptionSpace() throws {
+    func registerOptionCommandL() throws {
         guard hotKeyReference == nil else {
             return
         }
@@ -67,8 +67,8 @@ final class GlobalHotKey {
         var hotKeyReference: EventHotKeyRef?
         let hotKeyID = EventHotKeyID(signature: OSType(0x4C454150), id: 1)
         let status = RegisterEventHotKey(
-            UInt32(kVK_Space),
-            UInt32(optionKey),
+            UInt32(kVK_ANSI_L),
+            UInt32(optionKey | cmdKey),
             hotKeyID,
             GetApplicationEventTarget(),
             0,
@@ -83,6 +83,6 @@ final class GlobalHotKey {
         }
 
         self.hotKeyReference = hotKeyReference
-        Self.logger.info("已注册 Option + Space 全局快捷键。")
+        Self.logger.info("已注册 Option + Command + L 全局快捷键。")
     }
 }

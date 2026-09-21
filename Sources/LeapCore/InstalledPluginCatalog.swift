@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+@preconcurrency import YQLogger
 
 public struct PluginCommandDescriptor: Identifiable, Equatable, Sendable {
     public let pluginID: String
@@ -32,7 +32,7 @@ public struct PluginCommandDescriptor: Identifiable, Equatable, Sendable {
 }
 
 public struct InstalledPluginCatalog {
-    private static let logger = Logger(subsystem: "com.padding.leap", category: "plugin-catalog")
+    private static let logger = YQLogger(label: "com.padding.leap/plugin-catalog")
 
     public let paths: AppPaths
 
@@ -78,7 +78,7 @@ public struct InstalledPluginCatalog {
                     )
                 }
             } catch {
-                Self.logger.warning("跳过无效受管插件：\(directory.lastPathComponent, privacy: .public)，原因：\(error.localizedDescription, privacy: .public)。")
+                Self.logger.warning("跳过无效受管插件：\(directory.lastPathComponent)，原因：\(error.localizedDescription)。")
                 return []
             }
         }

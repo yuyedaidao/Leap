@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+@preconcurrency import YQLogger
 
 public struct AppPaths: Sendable {
     public enum PathError: LocalizedError, Equatable {
@@ -16,7 +16,7 @@ public struct AppPaths: Sendable {
         }
     }
 
-    private static let logger = Logger(subsystem: "com.padding.leap", category: "paths")
+    private static let logger = YQLogger(label: "com.padding.leap/paths")
 
     public let applicationSupportDirectory: URL
     public let resourceDirectory: URL
@@ -53,6 +53,10 @@ public struct AppPaths: Sendable {
 
     public var runtimesDirectory: URL {
         resourceDirectory.appendingPathComponent("Runtimes", isDirectory: true)
+    }
+
+    public var applicationIndexCacheURL: URL {
+        applicationSupportDirectory.appendingPathComponent("application-index-v1.json")
     }
 
     public func managedPluginDirectory(for pluginIdentifier: String) throws -> URL {

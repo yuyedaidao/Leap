@@ -253,10 +253,73 @@ struct LauncherShellTests {
         #expect(store.load(validKeys: [first]) == [first])
     }
 
+    @Test("系统应用索引支持名称、拼音首字母、缓存和重复 Bundle ID 优先级")
+    func systemApplicationIndexSearchAndCache() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let userApplications = root.appendingPathComponent("User", isDirectory: true)
+        let globalApplications = root.appendingPathComponent("Global", isDirectory: true)
+        let userCalculator = try makeApplication(named: "计算器", bundleID: "com.example.calculator", in: userApplications)
+        _ = try makeApplication(named: "Calculator Old", bundleID: "com.example.calculator", in: globalApplications)
+        _ = try makeApplication(named: "后台工具", bundleID: "com.example.background", in: globalApplications, backgroundOnly: true)
+
+        let applications = SystemApplicationScanner(roots: [userApplications, globalApplications]).scan()
+        #expect(applications.count == 1)
+        #expect(applications.first?.path == userCalculator.path)
+        #expect(applications.first?.matchRank(for: "jsq") != nil)
+        #expect(applications.first?.matchRank(for: "calculator") != nil)
+
+        let cacheURL = root.appendingPathComponent("index.json")
+        try SystemApplicationIndexCache.save(applications, to: cacheURL)
+        #expect(SystemApplicationIndexCache.load(from: cacheURL) == applications)
+        try Data("not-json".utf8).write(to: cacheURL)
+        #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
+    }
+
+    @Test("统一使用记录迁移旧插件历史并移除失效项目")
+    func launcherUsageStoreMigratesAndFiltersHistory() throws {
+        let suiteName = "LeapTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let command = RecentCommandKey(pluginID: "com.example.echo", commandID: "echo")
+        defaults.set(try JSONEncoder().encode([command]), forKey: "legacy")
+        let key = LauncherUsageKey.plugin(command)
+        let store = LauncherUsageStore(defaults: defaults, key: "usage", legacyKey: "legacy", maximumCount: 2)
+
+        #expect(store.load(validKeys: [key]).map(\.key) == [key])
+        store.record(.application(path: "/Applications/Calculator.app"), validKeys: [key, .application(path: "/Applications/Calculator.app")])
+        #expect(store.load(validKeys: [.application(path: "/Applications/Calculator.app")]).map(\.key) == [.application(path: "/Applications/Calculator.app")])
+    }
+
     private func makeTemporaryPluginDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("LeapTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    private func makeApplication(
+        named name: String,
+        bundleID: String,
+        in directory: URL,
+        backgroundOnly: Bool = false
+    ) throws -> URL {
+        let application = directory.appendingPathComponent("\(name).app", isDirectory: true)
+        let contents = application.appendingPathComponent("Contents", isDirectory: true)
+        let macOS = contents.appendingPathComponent("MacOS", isDirectory: true)
+        try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
+        let executable = macOS.appendingPathComponent("Runner")
+        try Data("#!/bin/sh\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        var info: [String: Any] = [
+            "CFBundlePackageType": "APPL",
+            "CFBundleExecutable": "Runner",
+            "CFBundleIdentifier": bundleID,
+            "CFBundleName": name
+        ]
+        if backgroundOnly { info["LSBackgroundOnly"] = true }
+        let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+        try data.write(to: contents.appendingPathComponent("Info.plist"))
+        return application
     }
 }

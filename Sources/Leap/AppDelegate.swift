@@ -1,10 +1,10 @@
 import AppKit
 import LeapCore
-import OSLog
+import YQLogger
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let logger = Logger(subsystem: "com.padding.leap", category: "app")
+    private let logger = YQLogger(label: "com.padding.leap/app")
     private var launcherPanelController: LauncherPanelController?
     private var globalHotKey: GlobalHotKey?
 
@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let paths = try makePaths()
             let model = LauncherModel(paths: paths)
+            model.startApplicationIndexing()
             let launcherPanelController = LauncherPanelController(model: model)
             self.launcherPanelController = launcherPanelController
 
@@ -28,13 +29,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 launcherPanelController?.present()
             }
             do {
-                try hotKey.registerOptionSpace()
+                try hotKey.registerOptionCommandL()
                 globalHotKey = hotKey
             } catch {
-                logger.error("\(error.localizedDescription, privacy: .public)")
+                logger.error(error.localizedDescription)
             }
         } catch {
-            logger.error("无法初始化 Leap 数据目录：\(error.localizedDescription, privacy: .public)。")
+            logger.error("无法初始化 Leap 数据目录：\(error.localizedDescription)。")
         }
     }
 

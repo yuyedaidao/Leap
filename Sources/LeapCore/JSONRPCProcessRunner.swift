@@ -1,5 +1,5 @@
 import Foundation
-import OSLog
+@preconcurrency import YQLogger
 
 struct JSONRPCRequest: Codable, Equatable, Sendable {
     let jsonrpc: String
@@ -51,7 +51,7 @@ public struct JSONRPCProcessRunner: Sendable {
         }
     }
 
-    private static let logger = Logger(subsystem: "com.padding.leap", category: "json-rpc")
+    private static let logger = YQLogger(label: "com.padding.leap/json-rpc")
 
     public init() {}
 
@@ -112,7 +112,7 @@ public struct JSONRPCProcessRunner: Sendable {
             throw RunnerError.invalidResponse
         }
 
-        Self.logger.debug("插件 JSON-RPC 请求已完成：\(commandID, privacy: .public)。")
+        Self.logger.debug("插件 JSON-RPC 请求已完成：\(commandID)。")
         return result
     }
 }

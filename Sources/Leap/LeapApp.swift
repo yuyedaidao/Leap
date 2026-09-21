@@ -38,7 +38,7 @@ struct LeapApp: App {
                 .ignoresSafeArea()
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 800, height: 420)
+        .defaultSize(width: 800, height: 98)
         .commands {
             CommandGroup(replacing: .newItem) {}
         }

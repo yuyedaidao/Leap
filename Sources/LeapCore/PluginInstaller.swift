@@ -1,6 +1,6 @@
 import CryptoKit
 import Foundation
-import OSLog
+@preconcurrency import YQLogger
 
 public struct PluginTrustRecord: Codable, Equatable, Sendable {
     public let pluginID: String
@@ -27,7 +27,7 @@ public struct PluginInstaller {
         }
     }
 
-    private static let logger = Logger(subsystem: "com.padding.leap", category: "plugin-installer")
+    private static let logger = YQLogger(label: "com.padding.leap/plugin-installer")
 
     public let paths: AppPaths
     private let manifestValidator = PluginManifestValidator()
@@ -88,7 +88,7 @@ public struct PluginInstaller {
         )
         let recordURL = paths.trustRecordsDirectory.appendingPathComponent("\(candidate.manifest.id).json")
         try JSONEncoder().encode(record).write(to: recordURL, options: .atomic)
-        Self.logger.info("已安装受管插件：\(candidate.manifest.id, privacy: .public)。")
+        Self.logger.info("已安装受管插件：\(candidate.manifest.id)。")
         return destination
     }
 

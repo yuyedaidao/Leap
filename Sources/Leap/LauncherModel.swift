@@ -1,11 +1,54 @@
+import AppKit
 import Foundation
 import LeapCore
 import Observation
-import OSLog
+import YQLogger
+
+enum LauncherItem: Identifiable {
+    case application(SystemApplicationDescriptor)
+    case plugin(PluginCommandDescriptor)
+
+    var id: String {
+        switch self {
+        case let .application(application): "application/\(application.id)"
+        case let .plugin(command): "plugin/\(command.id)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case let .application(application): application.name
+        case let .plugin(command): command.title
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case let .application(application):
+            application.bundleIdentifier.map { "应用 · \($0)" } ?? "应用"
+        case let .plugin(command): command.pluginName
+        }
+    }
+
+    var usageKey: LauncherUsageKey {
+        switch self {
+        case let .application(application): .application(path: application.historyKey)
+        case let .plugin(command): .plugin(RecentCommandKey(pluginID: command.pluginID, commandID: command.commandID))
+        }
+    }
+
+    var accessibilityID: String {
+        switch self {
+        case let .application(application): "launcher.application.\(application.id)"
+        case let .plugin(command): "launcher.command.\(command.id)"
+        }
+    }
+}
 
 @MainActor
 @Observable
 final class LauncherModel {
+    private static let logger = YQLogger(label: "com.padding.leap/launcher-model")
     enum InvocationState: Equatable {
         case idle
         case running(String)
@@ -20,52 +63,108 @@ final class LauncherModel {
 
     private let catalog: InstalledPluginCatalog?
     let pluginPaths: AppPaths?
-    private let recentStore: RecentCommandStore
+    private let recentStore: LauncherUsageStore
     private let scriptExecutor: PluginScriptExecutor?
     private let fixtureCommands: [PluginCommandDescriptor]?
+    private let fixtureApplications: [SystemApplicationDescriptor]?
+    private let applicationScanner: SystemApplicationScanner?
+    private let applicationIndexCacheURL: URL?
+    private let applicationLauncher: (URL) async throws -> Void
+    private var applicationWatcher: SystemApplicationWatcher?
 
     var query = ""
     private(set) var commands: [PluginCommandDescriptor] = []
-    private(set) var recentCommands: [PluginCommandDescriptor] = []
+    private(set) var applications: [SystemApplicationDescriptor] = []
+    private(set) var recentItems: [LauncherItem] = []
     private(set) var invocationState = InvocationState.idle
     private(set) var webCommand: PluginCommandDescriptor?
     private(set) var focusRequestID = 0
+    var applicationDidLaunch: (() -> Void)?
 
     init(paths: AppPaths) {
         catalog = InstalledPluginCatalog(paths: paths)
         pluginPaths = paths
-        recentStore = RecentCommandStore()
+        recentStore = LauncherUsageStore()
         scriptExecutor = PluginScriptExecutor(runtimeLocator: BundledRuntimeLocator(paths: paths))
         fixtureCommands = nil
+        fixtureApplications = nil
+        applicationScanner = SystemApplicationScanner()
+        applicationIndexCacheURL = paths.applicationIndexCacheURL
+        applicationLauncher = Self.launchSystemApplication
     }
 
-    init(fixtureCommands: [PluginCommandDescriptor], paths: AppPaths? = nil) {
+    init(
+        fixtureCommands: [PluginCommandDescriptor],
+        fixtureApplications: [SystemApplicationDescriptor] = [],
+        paths: AppPaths? = nil,
+        applicationLauncher: @escaping (URL) async throws -> Void = { _ in }
+    ) {
         catalog = nil
         pluginPaths = paths
-        recentStore = RecentCommandStore(defaults: .standard, key: "uiTestingRecentCommandKeys")
+        recentStore = LauncherUsageStore(defaults: .standard, key: "uiTestingLauncherUsageRecords")
         scriptExecutor = nil
         self.fixtureCommands = fixtureCommands
+        self.fixtureApplications = fixtureApplications
+        applicationScanner = nil
+        applicationIndexCacheURL = nil
+        self.applicationLauncher = applicationLauncher
+        applications = fixtureApplications
     }
 
-    var searchResults: [PluginCommandDescriptor] {
+    var searchResults: [LauncherItem] {
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else {
             return []
         }
-        return commands.filter {
-            $0.title.localizedCaseInsensitiveContains(normalizedQuery) ||
-                $0.pluginName.localizedCaseInsensitiveContains(normalizedQuery) ||
-                $0.commandID.localizedCaseInsensitiveContains(normalizedQuery)
+        let usage = Dictionary(uniqueKeysWithValues: recentStore.load(validKeys: validUsageKeys).map { ($0.key, $0) })
+        let applicationMatches = applications.compactMap { application in
+            application.matchRank(for: normalizedQuery).map { (LauncherItem.application(application), $0) }
         }
+        let pluginMatches = commands.compactMap { command in
+            pluginMatchRank(command, query: normalizedQuery).map { (LauncherItem.plugin(command), $0) }
+        }
+        return (applicationMatches + pluginMatches)
+            .sorted { left, right in
+                if left.1 != right.1 { return left.1 < right.1 }
+                let leftUsage = usage[left.0.usageKey]?.lastUsed ?? .distantPast
+                let rightUsage = usage[right.0.usageKey]?.lastUsed ?? .distantPast
+                if leftUsage != rightUsage { return leftUsage > rightUsage }
+                return left.0.title.localizedStandardCompare(right.0.title) == .orderedAscending
+            }
+            .prefix(8)
+            .map(\.0)
     }
 
     func reloadPlugins() {
         commands = fixtureCommands ?? catalog?.load() ?? []
-        rebuildRecentCommands()
+        if let fixtureApplications { applications = fixtureApplications }
+        rebuildRecentItems()
+    }
+
+    func startApplicationIndexing() {
+        guard let applicationScanner, let applicationIndexCacheURL, applicationWatcher == nil else { return }
+        applicationWatcher = SystemApplicationWatcher(roots: applicationScanner.roots) { [weak self] _, _ in
+            Task { @MainActor in self?.refreshApplications() }
+        }
+        applicationWatcher?.start()
+
+        Task { [weak self] in
+            let cached = await Task.detached { SystemApplicationIndexCache.load(from: applicationIndexCacheURL) }.value
+            guard let self, let cached else { return }
+            self.applications = cached
+            self.rebuildRecentItems()
+        }
+        refreshApplications()
     }
 
     func requestSearchFocus() {
         focusRequestID &+= 1
+    }
+
+    func prepareForPresentation() {
+        query = ""
+        invocationState = .idle
+        webCommand = nil
     }
 
     func activateFirstSearchResult() {
@@ -73,6 +172,15 @@ final class LauncherModel {
             return
         }
         activate(first)
+    }
+
+    func activate(_ item: LauncherItem) {
+        switch item {
+        case let .application(application):
+            activate(application)
+        case let .plugin(command):
+            activate(command)
+        }
     }
 
     func activate(_ command: PluginCommandDescriptor) {
@@ -132,23 +240,74 @@ final class LauncherModel {
                     query: query
                 ))
             } catch {
-                Logger(subsystem: "com.padding.leap", category: "launcher-model")
-                    .error("插件调用失败：\(error.localizedDescription, privacy: .public)。")
+                YQLogger(label: "com.padding.leap/launcher-model")
+                    .error("插件调用失败：\(error.localizedDescription)。")
                 return .failure(error.localizedDescription)
             }
         }.value
     }
 
     private func recordRecent(_ command: PluginCommandDescriptor) {
-        let validKeys = Set(commands.map { RecentCommandKey(pluginID: $0.pluginID, commandID: $0.commandID) })
-        recentStore.record(RecentCommandKey(pluginID: command.pluginID, commandID: command.commandID), validKeys: validKeys)
-        rebuildRecentCommands()
+        recentStore.record(.plugin(RecentCommandKey(pluginID: command.pluginID, commandID: command.commandID)), validKeys: validUsageKeys)
+        rebuildRecentItems()
     }
 
-    private func rebuildRecentCommands() {
-        let commandsByKey = Dictionary(uniqueKeysWithValues: commands.map {
-            (RecentCommandKey(pluginID: $0.pluginID, commandID: $0.commandID), $0)
-        })
-        recentCommands = recentStore.load(validKeys: Set(commandsByKey.keys)).compactMap { commandsByKey[$0] }
+    private func activate(_ application: SystemApplicationDescriptor) {
+        invocationState = .running(application.name)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await applicationLauncher(application.url)
+                guard !Task.isCancelled else { return }
+                recentStore.record(.application(path: application.historyKey), validKeys: validUsageKeys)
+                rebuildRecentItems()
+                applicationDidLaunch?()
+            } catch {
+                Self.logger.error("启动应用失败：\(application.name)，\(error.localizedDescription)。")
+                invocationState = .failed("无法启动 \(application.name)：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func refreshApplications() {
+        guard let applicationScanner, let applicationIndexCacheURL else { return }
+        Task { [weak self] in
+            let indexed = await Task.detached { applicationScanner.scan() }.value
+            guard let self else { return }
+            applications = indexed
+            rebuildRecentItems()
+            do {
+                try SystemApplicationIndexCache.save(indexed, to: applicationIndexCacheURL)
+            } catch {
+                Self.logger.error("保存系统应用索引失败：\(error.localizedDescription)。")
+            }
+        }
+    }
+
+    private var validUsageKeys: Set<LauncherUsageKey> {
+        Set(applications.map { .application(path: $0.historyKey) })
+            .union(commands.map { .plugin(RecentCommandKey(pluginID: $0.pluginID, commandID: $0.commandID)) })
+    }
+
+    private func rebuildRecentItems() {
+        let items = Dictionary(uniqueKeysWithValues: (applications.map(LauncherItem.application) + commands.map(LauncherItem.plugin)).map { ($0.usageKey, $0) })
+        recentItems = recentStore.load(validKeys: Set(items.keys)).compactMap { items[$0.key] }
+    }
+
+    private func pluginMatchRank(_ command: PluginCommandDescriptor, query: String) -> Int? {
+        let query = SystemApplicationDescriptor.normalize(query)
+        let title = SystemApplicationDescriptor.normalize(command.title)
+        let pluginName = SystemApplicationDescriptor.normalize(command.pluginName)
+        let commandID = SystemApplicationDescriptor.normalize(command.commandID)
+        if title == query { return 0 }
+        if title.hasPrefix(query) { return 1 }
+        if title.contains(query) { return 2 }
+        if pluginName.hasPrefix(query) || commandID.hasPrefix(query) { return 3 }
+        if pluginName.contains(query) || commandID.contains(query) { return 4 }
+        return nil
+    }
+
+    private static func launchSystemApplication(at url: URL) async throws {
+        _ = try await NSWorkspace.shared.openApplication(at: url, configuration: .init())
     }
 }

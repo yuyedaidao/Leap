@@ -1,0 +1,24 @@
+{
+  "originHash" : "16abf446b487c1b4b5804d4ecb2238dcfc65a7af93bdf47ae6b8362d203fd345",
+  "pins" : [
+    {
+      "identity" : "swift-log",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-log.git",
+      "state" : {
+        "revision" : "9c6fb14227f55d8f711ce3847dc2f419fb0ecacb",
+        "version" : "1.15.1"
+      }
+    },
+    {
+      "identity" : "yqlogger",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/yuyedaidao/YQLogger.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "8554e667baac48bf9d57d187c9fd45a94ccbe0ce"
+      }
+    }
+  ],
+  "version" : 3
+}

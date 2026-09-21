@@ -18,7 +18,7 @@ let project = Project(
             deploymentTargets: .macOS("26.0"),
             infoPlist: .default,
             sources: ["Sources/LeapCore/**"],
-            dependencies: []
+            dependencies: [.external(name: "YQLogger")]
         ),
         .target(
             name: "Leap",
@@ -31,7 +31,10 @@ let project = Project(
             ]),
             sources: ["Sources/Leap/**"],
             resources: [.folderReference(path: "Resources/Leap/Runtimes")],
-            dependencies: [.target(name: "LeapCore")]
+            dependencies: [
+                .target(name: "LeapCore"),
+                .external(name: "YQLogger"),
+            ]
         ),
         .target(
             name: "LeapTests",
