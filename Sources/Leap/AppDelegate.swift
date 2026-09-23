@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logger = YQLogger(label: "com.padding.leap/app")
     private var launcherPanelController: LauncherPanelController?
     private var globalHotKey: GlobalHotKey?
+    private(set) var settingsCoordinator: SettingsCoordinator?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -25,15 +26,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
 
-            let hotKey = GlobalHotKey { [weak launcherPanelController] in
-                launcherPanelController?.present()
-            }
+            let shortcutStore = HotKeyShortcutStore()
+            let hotKey = makeGlobalHotKey()
             do {
-                try hotKey.registerOptionCommandL()
+                try hotKey.register(shortcutStore.load())
                 globalHotKey = hotKey
             } catch {
                 logger.error(error.localizedDescription)
             }
+            settingsCoordinator = SettingsCoordinator(
+                paths: paths,
+                launcher: model,
+                shortcutStore: shortcutStore,
+                applyShortcut: { [weak self] shortcut in
+                    guard let self else {
+                        throw AppDelegateError.unavailable
+                    }
+                    try self.replaceGlobalHotKey(with: shortcut)
+                }
+            )
         } catch {
             logger.error("无法初始化 Leap 数据目录：\(error.localizedDescription)。")
         }
@@ -70,5 +81,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 #endif
         return try AppPaths()
+    }
+
+    private func makeGlobalHotKey() -> GlobalHotKey {
+        GlobalHotKey { [weak self] triggerLocation in
+            self?.launcherPanelController?.present(at: triggerLocation)
+        }
+    }
+
+    private func replaceGlobalHotKey(with shortcut: HotKeyShortcut) throws {
+        let previousHotKey = globalHotKey
+        let previousShortcut = previousHotKey?.shortcut
+        previousHotKey?.unregister()
+
+        let replacement = makeGlobalHotKey()
+        do {
+            try replacement.register(shortcut)
+            globalHotKey = replacement
+        } catch {
+            if let previousHotKey, let previousShortcut {
+                do {
+                    try previousHotKey.register(previousShortcut)
+                    globalHotKey = previousHotKey
+                } catch {
+                    logger.error("恢复旧全局快捷键失败：\(error.localizedDescription)。")
+                    globalHotKey = nil
+                }
+            }
+            throw error
+        }
+    }
+}
+
+private enum AppDelegateError: LocalizedError {
+    case unavailable
+
+    var errorDescription: String? {
+        "Leap 尚未完成初始化，无法更新全局快捷键。"
     }
 }

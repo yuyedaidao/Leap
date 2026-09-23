@@ -42,5 +42,9 @@ struct LeapApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
         }
+
+        Settings {
+            LeapSettingsRootView(appDelegate: appDelegate)
+        }
     }
 }

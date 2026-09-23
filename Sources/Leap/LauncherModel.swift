@@ -49,6 +49,17 @@ enum LauncherItem: Identifiable {
 @Observable
 final class LauncherModel {
     private static let logger = YQLogger(label: "com.padding.leap/launcher-model")
+    enum ApplicationIndexError: LocalizedError {
+        case unavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable:
+                "当前运行模式无法重建系统应用索引。"
+            }
+        }
+    }
+
     enum InvocationState: Equatable {
         case idle
         case running(String)
@@ -139,6 +150,32 @@ final class LauncherModel {
         commands = fixtureCommands ?? catalog?.load() ?? []
         if let fixtureApplications { applications = fixtureApplications }
         rebuildRecentItems()
+    }
+
+    var canRebuildApplicationIndex: Bool {
+        applicationScanner != nil && applicationIndexCacheURL != nil
+    }
+
+    func clearRecentItems() {
+        recentStore.clear()
+        rebuildRecentItems()
+    }
+
+    func rebuildApplicationIndex(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let applicationIndexCacheURL else {
+            completion(.failure(ApplicationIndexError.unavailable))
+            return
+        }
+        do {
+            if FileManager.default.fileExists(atPath: applicationIndexCacheURL.path) {
+                try FileManager.default.removeItem(at: applicationIndexCacheURL)
+            }
+        } catch {
+            Self.logger.error("删除系统应用索引缓存失败：\(error.localizedDescription)。")
+            completion(.failure(error))
+            return
+        }
+        refreshApplications(completion: completion)
     }
 
     func startApplicationIndexing() {
@@ -269,8 +306,11 @@ final class LauncherModel {
         }
     }
 
-    private func refreshApplications() {
-        guard let applicationScanner, let applicationIndexCacheURL else { return }
+    private func refreshApplications(completion: @escaping (Result<Void, Error>) -> Void = { _ in }) {
+        guard let applicationScanner, let applicationIndexCacheURL else {
+            completion(.failure(ApplicationIndexError.unavailable))
+            return
+        }
         Task { [weak self] in
             let indexed = await Task.detached { applicationScanner.scan() }.value
             guard let self else { return }
@@ -278,8 +318,10 @@ final class LauncherModel {
             rebuildRecentItems()
             do {
                 try SystemApplicationIndexCache.save(indexed, to: applicationIndexCacheURL)
+                completion(.success(()))
             } catch {
                 Self.logger.error("保存系统应用索引失败：\(error.localizedDescription)。")
+                completion(.failure(error))
             }
         }
     }

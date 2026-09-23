@@ -97,6 +97,12 @@ public final class LauncherUsageStore {
         save(Array(([record] + load(validKeys: validKeys).filter { $0.key != key }).prefix(maximumCount)))
     }
 
+    /// 同时清除旧键，避免下次读取时将历史记录重新迁移回来。
+    public func clear() {
+        defaults.removeObject(forKey: key)
+        defaults.removeObject(forKey: legacyKey)
+    }
+
     private func storedRecords() -> [LauncherUsageRecord] {
         if let data = defaults.data(forKey: key),
            let records = try? JSONDecoder().decode([LauncherUsageRecord].self, from: data) {

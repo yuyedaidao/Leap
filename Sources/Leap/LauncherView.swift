@@ -1,20 +1,25 @@
 import AppKit
 import LeapCore
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct LauncherView: View {
     let model: LauncherModel
     private let contentHeightDidChange: (CGFloat) -> Void
+    private let hideForSettings: () -> Void
 
     @FocusState private var isSearchFieldFocused: Bool
-    @State private var isSettingsPresented = false
+    @AppStorage("appearancePreference") private var appearanceRaw = AppearancePreference.system.rawValue
     @State private var selectedSearchResultID: LauncherItem.ID?
     @State private var selectedRecentItemID: LauncherItem.ID?
 
-    init(model: LauncherModel, contentHeightDidChange: @escaping (CGFloat) -> Void = { _ in }) {
+    init(
+        model: LauncherModel,
+        contentHeightDidChange: @escaping (CGFloat) -> Void = { _ in },
+        hideForSettings: @escaping () -> Void = {}
+    ) {
         self.model = model
         self.contentHeightDidChange = contentHeightDidChange
+        self.hideForSettings = hideForSettings
     }
 
     var body: some View {
@@ -24,7 +29,7 @@ struct LauncherView: View {
             LauncherSearchHeader(
                 query: $model.query,
                 isFocused: $isSearchFieldFocused,
-                showSettings: { isSettingsPresented = true },
+                hideForSettings: hideForSettings,
                 submit: activateSelectedItem,
                 moveSearchSelection: moveSearchSelection,
                 moveRecentSelection: moveRecentSelection
@@ -50,6 +55,7 @@ struct LauncherView: View {
         }
         .ignoresSafeArea()
         .shadow(color: .black.opacity(0.16), radius: 22, y: 8)
+        .preferredColorScheme((AppearancePreference(rawValue: appearanceRaw) ?? .system).colorScheme)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
         } action: { height in
@@ -67,14 +73,6 @@ struct LauncherView: View {
         }
         .onChange(of: model.focusRequestID, initial: true) {
             isSearchFieldFocused = true
-        }
-        .sheet(isPresented: $isSettingsPresented) {
-            if let paths = model.pluginPaths {
-                PluginSettingsView(paths: paths, launcher: model)
-            } else {
-                ContentUnavailableView("设置不可用", systemImage: "exclamationmark.triangle")
-                    .frame(width: 420, height: 240)
-            }
         }
         .sheet(
             isPresented: Binding(
@@ -140,9 +138,10 @@ struct LauncherView: View {
 }
 
 private struct LauncherSearchHeader: View {
+    @Environment(\.openSettings) private var openSettings
     @Binding var query: String
     let isFocused: FocusState<Bool>.Binding
-    let showSettings: () -> Void
+    let hideForSettings: () -> Void
     let submit: () -> Void
     let moveSearchSelection: (Int) -> Bool
     let moveRecentSelection: (Int) -> Bool
@@ -168,7 +167,10 @@ private struct LauncherSearchHeader: View {
                     moveRecentSelection(1) ? .handled : .ignored
                 }
 
-            Button(action: showSettings) {
+            Button {
+                hideForSettings()
+                openSettings()
+            } label: {
                 Image(systemName: "gearshape")
                     .resizable()
                     .font(.body)
@@ -196,7 +198,7 @@ private struct LauncherSearchHeaderPreview: View {
         LauncherSearchHeader(
             query: $query,
             isFocused: $isFocused,
-            showSettings: {},
+            hideForSettings: {},
             submit: {},
             moveSearchSelection: { _ in false },
             moveRecentSelection: { _ in false }
@@ -422,76 +424,6 @@ private struct LauncherInvocationFeedback: View {
                 .foregroundStyle(.red)
                 .lineLimit(2)
                 .accessibilityIdentifier("launcher.pluginError")
-        }
-    }
-}
-
-private struct PluginSettingsView: View {
-    let paths: AppPaths
-    let launcher: LauncherModel
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var isImporterPresented = false
-    @State private var installation: PluginInstallationModel
-
-    init(paths: AppPaths, launcher: LauncherModel) {
-        self.paths = paths
-        self.launcher = launcher
-        _installation = State(initialValue: PluginInstallationModel(paths: paths, didInstall: launcher.reloadPlugins))
-    }
-
-    var body: some View {
-        @Bindable var installation = installation
-
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("Leap 设置")
-                    .font(.title2.bold())
-                Spacer()
-                Button("完成", action: dismiss.callAsFunction)
-                    .keyboardShortcut(.defaultAction)
-            }
-
-            Text("本地插件会先校验清单，再复制到 Leap 的受管目录。首次安装或内容变化需要确认信任。")
-                .foregroundStyle(.secondary)
-
-            Button("安装本地插件") {
-                isImporterPresented = true
-            }
-            .accessibilityIdentifier("launcher.installPluginButton")
-
-            if let errorMessage = installation.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-            }
-
-            Spacer()
-        }
-        .padding(24)
-        .frame(width: 500, height: 300)
-        .fileImporter(isPresented: $isImporterPresented, allowedContentTypes: [.folder]) { result in
-            switch result {
-            case let .success(directory):
-                let accessed = directory.startAccessingSecurityScopedResource()
-                installation.inspect(directory: directory, isSecurityScoped: accessed)
-            case let .failure(error):
-                installation.inspectFailure(error)
-            }
-        }
-        .confirmationDialog(
-            "确认安装插件？",
-            isPresented: $installation.isConfirmationPresented,
-            titleVisibility: .visible,
-            presenting: installation.candidate
-        ) { candidate in
-            Button("安装 \(candidate.manifest.name)") {
-                installation.confirmInstallation()
-            }
-            Button("取消", role: .cancel) {
-                installation.rejectInstallation()
-            }
-        } message: { candidate in
-            Text("\(candidate.manifest.name) \(candidate.manifest.version)\n运行时：\(candidate.manifest.runtime.rawValue)\n命令：\(candidate.manifest.commands.map(\.title).formatted())")
         }
     }
 }

@@ -86,14 +86,31 @@ public struct PluginInstaller {
             version: candidate.manifest.version,
             contentDigest: candidate.contentDigest
         )
-        let recordURL = paths.trustRecordsDirectory.appendingPathComponent("\(candidate.manifest.id).json")
+        let recordURL = try paths.trustRecordURL(for: candidate.manifest.id)
         try JSONEncoder().encode(record).write(to: recordURL, options: .atomic)
         Self.logger.info("已安装受管插件：\(candidate.manifest.id)。")
         return destination
     }
 
+    /// 只删除 Leap 自己创建的受管副本和对应信任记录，不接触用户选择的源目录。
+    public func uninstall(pluginID: String, fileManager: FileManager = .default) throws {
+        let destination = try paths.managedPluginDirectory(for: pluginID)
+        guard destination.deletingLastPathComponent().standardizedFileURL == paths.pluginsDirectory.standardizedFileURL else {
+            throw InstallationError.managedDirectoryEscape
+        }
+
+        let recordURL = try paths.trustRecordURL(for: pluginID)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        if fileManager.fileExists(atPath: recordURL.path) {
+            try fileManager.removeItem(at: recordURL)
+        }
+        Self.logger.info("已卸载受管插件：\(pluginID)。")
+    }
+
     public func readTrustRecord(for pluginID: String, fileManager: FileManager = .default) throws -> PluginTrustRecord? {
-        let recordURL = paths.trustRecordsDirectory.appendingPathComponent("\(pluginID).json")
+        let recordURL = try paths.trustRecordURL(for: pluginID)
         guard fileManager.fileExists(atPath: recordURL.path) else {
             return nil
         }

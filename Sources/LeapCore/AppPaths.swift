@@ -66,6 +66,13 @@ public struct AppPaths: Sendable {
         return pluginsDirectory.appendingPathComponent(pluginIdentifier, isDirectory: true)
     }
 
+    public func trustRecordURL(for pluginIdentifier: String) throws -> URL {
+        guard Self.isSafePluginIdentifier(pluginIdentifier) else {
+            throw PathError.invalidPluginIdentifier
+        }
+        return trustRecordsDirectory.appendingPathComponent("\(pluginIdentifier).json")
+    }
+
     public func createManagedDirectories(fileManager: FileManager = .default) throws {
         for directory in [applicationSupportDirectory, pluginsDirectory, trustRecordsDirectory] {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -231,6 +231,7 @@ struct LauncherShellTests {
         try installer.install(try installer.inspect(sourceDirectory: source), confirmed: true)
         let catalog = InstalledPluginCatalog(paths: paths)
 
+        #expect(catalog.loadPlugins().map(\.manifest.id) == [manifest.id])
         #expect(catalog.load().map(\.commandID) == ["catalog.echo"])
         try Data("print('changed')".utf8).write(to: try paths.managedPluginDirectory(for: manifest.id).appendingPathComponent("main.py"))
         #expect(catalog.load().isEmpty)
@@ -289,6 +290,39 @@ struct LauncherShellTests {
         #expect(store.load(validKeys: [key]).map(\.key) == [key])
         store.record(.application(path: "/Applications/Calculator.app"), validKeys: [key, .application(path: "/Applications/Calculator.app")])
         #expect(store.load(validKeys: [.application(path: "/Applications/Calculator.app")]).map(\.key) == [.application(path: "/Applications/Calculator.app")])
+        store.clear()
+        #expect(store.load(validKeys: [.application(path: "/Applications/Calculator.app")]).isEmpty)
+    }
+
+    @Test("卸载受管插件会删除副本和信任记录")
+    func pluginUninstallRemovesManagedFilesAndTrust() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = root.appendingPathComponent("Source", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let manifest = PluginManifest(
+            id: "com.example.remove",
+            name: "Remove",
+            version: "1.0.0",
+            runtime: .python,
+            entry: "main.py",
+            commands: [.init(id: "remove", title: "Remove")]
+        )
+        try Data("print('ready')".utf8).write(to: source.appendingPathComponent("main.py"))
+        try JSONEncoder().encode(manifest).write(to: source.appendingPathComponent("manifest.json"))
+
+        let paths = AppPaths(
+            applicationSupportDirectory: root.appendingPathComponent("Application Support/Leap"),
+            resourceDirectory: root.appendingPathComponent("Resources")
+        )
+        let installer = PluginInstaller(paths: paths)
+        try installer.install(try installer.inspect(sourceDirectory: source), confirmed: true)
+        try installer.uninstall(pluginID: manifest.id)
+
+        #expect(!FileManager.default.fileExists(atPath: try paths.managedPluginDirectory(for: manifest.id).path))
+        #expect(!FileManager.default.fileExists(atPath: try paths.trustRecordURL(for: manifest.id).path))
+        #expect(InstalledPluginCatalog(paths: paths).loadPlugins().isEmpty)
     }
 
     private func makeTemporaryPluginDirectory() throws -> URL {

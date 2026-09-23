@@ -191,7 +191,10 @@ final class LeapUITests: XCTestCase {
         let settings = app.buttons["launcher.settingsButton"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.click()
-        XCTAssertTrue(app.buttons["launcher.installPluginButton"].waitForExistence(timeout: 2))
+        let pluginTab = app.buttons["插件"]
+        XCTAssertTrue(pluginTab.waitForExistence(timeout: 5))
+        pluginTab.click()
+        XCTAssertTrue(app.buttons["settings.installPluginButton"].waitForExistence(timeout: 5))
     }
 
     @MainActor
