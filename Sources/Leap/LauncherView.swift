@@ -8,7 +8,6 @@ struct LauncherView: View {
     private let hideForSettings: () -> Void
 
     @FocusState private var isSearchFieldFocused: Bool
-    @AppStorage("appearancePreference") private var appearanceRaw = AppearancePreference.system.rawValue
     @State private var selectedSearchResultID: LauncherItem.ID?
     @State private var selectedRecentItemID: LauncherItem.ID?
 
@@ -58,7 +57,6 @@ struct LauncherView: View {
         }
         .ignoresSafeArea()
         .shadow(color: .black.opacity(0.16), radius: 22, y: 8)
-        .preferredColorScheme((AppearancePreference(rawValue: appearanceRaw) ?? .system).colorScheme)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
         } action: { height in

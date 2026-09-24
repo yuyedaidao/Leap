@@ -1,3 +1,4 @@
+import AppKit
 import Observation
 import LeapCore
 import ServiceManagement
@@ -19,11 +20,15 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
         }
     }
 
-    var colorScheme: ColorScheme? {
+    var appKitAppearance: NSAppearance? {
         switch self {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
+        case .system:
+            // nil 会移除应用级覆盖，让 AppKit 继续响应系统外观变化。
+            nil
+        case .light:
+            NSAppearance(named: .aqua)
+        case .dark:
+            NSAppearance(named: .darkAqua)
         }
     }
 }

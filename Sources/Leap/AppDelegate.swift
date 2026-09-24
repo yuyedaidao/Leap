@@ -10,6 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var settingsCoordinator: SettingsCoordinator?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let savedAppearance = UserDefaults.standard.string(forKey: "appearancePreference")
+        applyAppearancePreference(AppearancePreference(rawValue: savedAppearance ?? "") ?? .system)
+
         do {
             let paths = try makePaths()
             let model = LauncherModel(paths: paths)
@@ -56,6 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         globalHotKey?.unregister()
+    }
+
+    func applyAppearancePreference(_ preference: AppearancePreference) {
+        // 外观要设在 NSApplication 上，才能同时影响 Settings 的标题栏和 SwiftUI 内容，
+        // 而不是只让内容区域与窗口装饰处于不同主题。
+        NSApp.appearance = preference.appKitAppearance
     }
 
     private func makePaths() throws -> AppPaths {

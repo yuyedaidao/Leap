@@ -20,8 +20,16 @@ struct LeapSettingsRootView: View {
                     .frame(width: 620, height: 420)
             }
         }
-        // 主题偏好必须位于设置内容根部，才能在切回“跟随系统”时移除 TabView 的旧偏好。
-        .preferredColorScheme((AppearancePreference(rawValue: appearanceRaw) ?? .system).colorScheme)
+        .onAppear {
+            appDelegate.applyAppearancePreference(currentAppearance)
+        }
+        .onChange(of: appearanceRaw) {
+            appDelegate.applyAppearancePreference(currentAppearance)
+        }
+    }
+
+    private var currentAppearance: AppearancePreference {
+        AppearancePreference(rawValue: appearanceRaw) ?? .system
     }
 }
 
