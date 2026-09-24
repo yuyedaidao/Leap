@@ -65,6 +65,7 @@ final class LauncherModel {
         case running(String)
         case result(String)
         case failed(String)
+        case shellOutput(title: String, output: String, isRunning: Bool)
     }
 
     enum InvocationResponse: Sendable {
@@ -76,12 +77,14 @@ final class LauncherModel {
     let pluginPaths: AppPaths?
     private let recentStore: LauncherUsageStore
     private let scriptExecutor: PluginScriptExecutor?
+    private let shellExecutor: ShellScriptExecutor?
     private let fixtureCommands: [PluginCommandDescriptor]?
     private let fixtureApplications: [SystemApplicationDescriptor]?
     private let applicationScanner: SystemApplicationScanner?
     private let applicationIndexCacheURL: URL?
     private let applicationLauncher: (URL) async throws -> Void
     private var applicationWatcher: SystemApplicationWatcher?
+    private var foregroundShellTask: ShellScriptTask?
 
     var query = ""
     private(set) var commands: [PluginCommandDescriptor] = []
@@ -97,6 +100,7 @@ final class LauncherModel {
         pluginPaths = paths
         recentStore = LauncherUsageStore()
         scriptExecutor = PluginScriptExecutor(runtimeLocator: BundledRuntimeLocator(paths: paths))
+        shellExecutor = ShellScriptExecutor()
         fixtureCommands = nil
         fixtureApplications = nil
         applicationScanner = SystemApplicationScanner()
@@ -114,6 +118,7 @@ final class LauncherModel {
         pluginPaths = paths
         recentStore = LauncherUsageStore(defaults: .standard, key: "uiTestingLauncherUsageRecords")
         scriptExecutor = nil
+        shellExecutor = nil
         self.fixtureCommands = fixtureCommands
         self.fixtureApplications = fixtureApplications
         applicationScanner = nil
@@ -221,6 +226,10 @@ final class LauncherModel {
     }
 
     func activate(_ command: PluginCommandDescriptor) {
+        if command.manifest.runtime == .shell {
+            activateShell(command)
+            return
+        }
         guard command.manifest.webEntry == nil else {
             webCommand = command
             return
@@ -351,5 +360,106 @@ final class LauncherModel {
 
     private static func launchSystemApplication(at url: URL) async throws {
         _ = try await NSWorkspace.shared.openApplication(at: url, configuration: .init())
+    }
+}
+
+extension LauncherModel {
+    func stopForegroundShell() {
+        foregroundShellTask?.cancel()
+    }
+
+    private func activateShell(_ command: PluginCommandDescriptor) {
+        guard let shellExecutor else {
+            invocationState = .failed("测试模式不执行 Shell 脚本。")
+            return
+        }
+        guard let manifestCommand = command.manifest.commands.first(where: { $0.id == command.commandID }) else {
+            invocationState = .failed("Shell 插件命令未在清单中声明。")
+            return
+        }
+
+        let entryURL = command.pluginDirectory.appendingPathComponent(command.manifest.entry)
+        switch manifestCommand.resolvedExecutionMode {
+        case .background:
+            do {
+                try shellExecutor.startBackground(
+                    entryURL: entryURL,
+                    pluginDirectory: command.pluginDirectory,
+                    commandID: command.commandID
+                )
+                recordRecent(command)
+                invocationState = .idle
+                applicationDidLaunch?()
+            } catch {
+                Self.logger.error("后台 Shell 脚本启动失败：\(error.localizedDescription)。")
+                invocationState = .failed(error.localizedDescription)
+            }
+        case .foreground:
+            do {
+                let task = try shellExecutor.makeForegroundTask(
+                    entryURL: entryURL,
+                    pluginDirectory: command.pluginDirectory,
+                    commandID: command.commandID
+                )
+                let outputHandler: @Sendable (String) -> Void = { [weak self] output in
+                    Task { @MainActor [weak self] in
+                        self?.appendForegroundShellOutput(output)
+                    }
+                }
+                foregroundShellTask = task
+                invocationState = .shellOutput(title: command.title, output: "", isRunning: true)
+                try task.start(onOutput: outputHandler)
+
+                Task { [weak self, task] in
+                    let result = await Task.detached(priority: .userInitiated) {
+                        Result { try task.waitForCompletion(onOutput: outputHandler) }
+                    }.value
+                    guard let self, self.foregroundShellTask === task else { return }
+                    self.foregroundShellTask = nil
+                    self.finishForegroundShell(title: command.title, result: result)
+                    if case .success = result {
+                        self.recordRecent(command)
+                    }
+                }
+            } catch {
+                Self.logger.error("前台 Shell 脚本启动失败：\(error.localizedDescription)。")
+                invocationState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func appendForegroundShellOutput(_ output: String) {
+        guard case let .shellOutput(title, currentOutput, true) = invocationState else { return }
+        invocationState = .shellOutput(
+            title: title,
+            output: limitedShellOutput(currentOutput + output),
+            isRunning: true
+        )
+    }
+
+    private func finishForegroundShell(title: String, result: Result<Void, Error>) {
+        let currentOutput: String
+        if case let .shellOutput(_, output, _) = invocationState {
+            currentOutput = output
+        } else {
+            currentOutput = ""
+        }
+        let finalOutput: String
+        switch result {
+        case .success:
+            finalOutput = currentOutput.isEmpty ? "执行完成。" : currentOutput
+        case let .failure(error):
+            Self.logger.error("前台 Shell 脚本失败：\(error.localizedDescription)。")
+            finalOutput = limitedShellOutput(currentOutput + "\n\(error.localizedDescription)\n")
+        }
+        invocationState = .shellOutput(title: title, output: finalOutput, isRunning: false)
+    }
+
+    private func limitedShellOutput(_ output: String) -> String {
+        let limit = 64 * 1024
+        guard output.utf8.count > limit else { return output }
+        let prefix = "…输出已截断，以下为最新内容：\n"
+        let suffix = output.utf8.suffix(limit - prefix.utf8.count)
+        return prefix + String(decoding: suffix, as: UTF8.self)
     }
 }

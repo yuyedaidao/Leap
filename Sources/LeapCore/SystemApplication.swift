@@ -2,6 +2,7 @@ import Foundation
 
 public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Sendable {
     public let name: String
+    public let alternateNames: [String]
     public let bundleIdentifier: String?
     public let path: String
     public let normalizedName: String
@@ -12,11 +13,20 @@ public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Send
     public var url: URL { URL(fileURLWithPath: path) }
     public var historyKey: String { path }
 
-    public init(name: String, bundleIdentifier: String?, url: URL) {
+    public init(name: String, bundleIdentifier: String?, url: URL, alternateNames: [String] = []) {
         self.name = name
         self.bundleIdentifier = bundleIdentifier
         path = url.standardizedFileURL.resolvingSymlinksInPath().path
         normalizedName = Self.normalize(name)
+
+        // 本地化名称用于显示，未本地化名称仅作为检索别名，避免重复索引同一文本。
+        var indexedNames = Set<String>()
+        if !normalizedName.isEmpty { indexedNames.insert(normalizedName) }
+        self.alternateNames = alternateNames.filter { alternateName in
+            let normalized = Self.normalize(alternateName)
+            return !normalized.isEmpty && indexedNames.insert(normalized).inserted
+        }
+
         let latin = name.applyingTransform(.toLatin, reverse: false) ?? name
         pinyin = Self.normalize(latin)
         pinyinInitials = latin
@@ -32,10 +42,11 @@ public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Send
         let query = Self.normalize(query)
         guard !query.isEmpty else { return nil }
         let bundleID = Self.normalize(bundleIdentifier ?? "")
+        let names = [normalizedName] + alternateNames.map(Self.normalize)
 
-        if normalizedName == query { return 0 }
-        if normalizedName.hasPrefix(query) { return 1 }
-        if normalizedName.contains(query) { return 2 }
+        if names.contains(query) { return 0 }
+        if names.contains(where: { $0.hasPrefix(query) }) { return 1 }
+        if names.contains(where: { $0.contains(query) }) { return 2 }
         if bundleID.hasPrefix(query) { return 3 }
         if bundleID.contains(query) { return 4 }
         if pinyin == query { return 5 }
@@ -65,9 +76,18 @@ public struct SystemApplicationScanner: Sendable {
     ]
 
     public let roots: [URL]
+    private let preferredLanguages: [String]
 
     public init(roots: [URL] = Self.defaultRoots) {
+        self.init(
+            roots: roots,
+            preferredLanguages: UserDefaults.standard.stringArray(forKey: "AppleLanguages") ?? []
+        )
+    }
+
+    init(roots: [URL], preferredLanguages: [String]) {
         self.roots = roots.map(\.standardizedFileURL)
+        self.preferredLanguages = preferredLanguages
     }
 
     public func scan(fileManager: FileManager = .default) -> [SystemApplicationDescriptor] {
@@ -127,10 +147,57 @@ public struct SystemApplicationScanner: Sendable {
             return nil
         }
 
-        let name = (info["CFBundleDisplayName"] as? String)
+        let localizedNames = localizedNames(in: bundle)
+        let localizedInfo = bundle.localizedInfoDictionary ?? [:]
+        let name = localizedNames.first
+            ?? (localizedInfo["CFBundleDisplayName"] as? String)
+            ?? (localizedInfo["CFBundleName"] as? String)
+            ?? (info["CFBundleDisplayName"] as? String)
             ?? (info["CFBundleName"] as? String)
             ?? url.deletingPathExtension().lastPathComponent
-        return SystemApplicationDescriptor(name: name, bundleIdentifier: bundle.bundleIdentifier, url: url)
+        let alternateNames = [
+            info["CFBundleDisplayName"] as? String,
+            info["CFBundleName"] as? String
+        ].compactMap { $0 } + localizedNames
+        return SystemApplicationDescriptor(
+            name: name,
+            bundleIdentifier: bundle.bundleIdentifier,
+            url: url,
+            alternateNames: alternateNames
+        )
+    }
+
+    private func localizedNames(in bundle: Bundle) -> [String] {
+        let preferredLocalizations = Bundle.preferredLocalizations(
+            from: bundle.localizations,
+            forPreferences: preferredLanguages
+        )
+        let localizations = preferredLocalizations + bundle.localizations.filter {
+            !preferredLocalizations.contains($0)
+        }
+        return localizations.flatMap { localization -> [String] in
+            guard let url = bundle.url(
+                forResource: "InfoPlist",
+                withExtension: "strings",
+                subdirectory: nil,
+                localization: localization
+            ),
+                let data = try? Data(contentsOf: url),
+                let info = try? PropertyListSerialization.propertyList(
+                    from: data,
+                    options: [],
+                    format: nil
+                ) as? [String: Any]
+            else {
+                return []
+            }
+
+            // 先返回用户首选语言，列表显示与 Finder 一致；其他语言仍保留为检索别名。
+            return [
+                info["CFBundleDisplayName"] as? String,
+                info["CFBundleName"] as? String
+            ].compactMap { $0 }
+        }
     }
 }
 
@@ -140,7 +207,7 @@ public enum SystemApplicationIndexCache {
         let applications: [SystemApplicationDescriptor]
     }
 
-    private static let version = 1
+    private static let version = 3
 
     public static func load(from url: URL, fileManager: FileManager = .default) -> [SystemApplicationDescriptor]? {
         guard fileManager.fileExists(atPath: url.path),

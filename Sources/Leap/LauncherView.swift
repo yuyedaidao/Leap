@@ -43,7 +43,10 @@ struct LauncherView: View {
                 activate: model.activate
             )
             if model.invocationState != .idle {
-                LauncherInvocationFeedback(state: model.invocationState)
+                LauncherInvocationFeedback(
+                    state: model.invocationState,
+                    stopForegroundShell: model.stopForegroundShell
+                )
             }
         }
         .padding(24)
@@ -393,17 +396,26 @@ private struct CommandIcon: View {
                 .scaledToFit()
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         } else {
-            Image(systemName: runtime == .python ? "chevron.left.forwardslash.chevron.right" : "curlybraces")
+            Image(systemName: iconName)
                 .font(.title3)
                 .foregroundStyle(.tint)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+    }
+
+    private var iconName: String {
+        switch runtime {
+        case .python: "chevron.left.forwardslash.chevron.right"
+        case .javascript: "curlybraces"
+        case .shell: "terminal"
         }
     }
 }
 
 private struct LauncherInvocationFeedback: View {
     let state: LauncherModel.InvocationState
+    let stopForegroundShell: () -> Void
 
     var body: some View {
         switch state {
@@ -424,6 +436,37 @@ private struct LauncherInvocationFeedback: View {
                 .foregroundStyle(.red)
                 .lineLimit(2)
                 .accessibilityIdentifier("launcher.pluginError")
+        case let .shellOutput(title, output, isRunning):
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label(
+                        isRunning ? "正在运行 \(title)…" : "\(title) 已结束",
+                        systemImage: isRunning ? "terminal" : "checkmark.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    Spacer()
+                    if isRunning {
+                        Button("停止", role: .destructive, action: stopForegroundShell)
+                            .accessibilityIdentifier("launcher.stopShellButton")
+                    }
+                }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        Text(output.isEmpty ? "正在等待输出…" : output)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                        Color.clear.frame(height: 1).id("shellOutputEnd")
+                    }
+                    .frame(maxHeight: 220)
+                    .onAppear { proxy.scrollTo("shellOutputEnd", anchor: .bottom) }
+                    .onChange(of: output) { proxy.scrollTo("shellOutputEnd", anchor: .bottom) }
+                }
+                .padding(10)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityIdentifier("launcher.shellOutput")
+            }
         }
     }
 }
