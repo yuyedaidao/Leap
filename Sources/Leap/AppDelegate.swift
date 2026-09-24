@@ -54,15 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
-    func applicationDidBecomeActive(_ notification: Notification) {
-        // SwiftUI 场景仅维持应用生命周期；每次激活后都确保它不会成为第二个启动器窗口。
-        DispatchQueue.main.async {
-            NSApp.windows
-                .filter { $0.identifier?.rawValue != "com.padding.leap.launcher" }
-                .forEach { $0.orderOut(nil) }
-        }
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
         globalHotKey?.unregister()
     }
