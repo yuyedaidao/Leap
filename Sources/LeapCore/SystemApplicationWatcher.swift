@@ -39,7 +39,10 @@ public final class SystemApplicationWatcher: @unchecked Sendable {
                 self.roots as CFArray,
                 FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
                 0.2,
-                FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)
+                // 回调将 eventPaths 按 CFArray<CFString> 传入，才能安全桥接为 Swift 字符串数组。
+                FSEventStreamCreateFlags(
+                    kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes
+                )
             )
             guard let stream else { return }
             self.stream = stream

@@ -4,6 +4,9 @@ Tuist/Derived/
 Tuist/.build/
 Leap.xcodeproj/
 Leap.xcworkspace/
+# 本机路径相关，由 xcode-build-server 生成
+buildServer.json
+.compile
 build/
 .runtime-cache/
 Resources/Leap/Runtimes/node-*/

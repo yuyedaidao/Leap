@@ -84,8 +84,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeGlobalHotKey() -> GlobalHotKey {
-        GlobalHotKey { [weak self] triggerLocation in
-            self?.launcherPanelController?.present(at: triggerLocation)
+        GlobalHotKey { [weak self] targetDisplayID, fallbackLocation in
+            self?.launcherPanelController?.present(
+                on: targetDisplayID,
+                fallbackLocation: fallbackLocation
+            )
         }
     }
 

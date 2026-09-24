@@ -74,9 +74,12 @@ struct PluginSettingsPage: View {
 
     private func installConfirmationMessage(_ candidate: PluginInstallCandidate) -> Text {
         let commands = candidate.manifest.commands.map(\.title).formatted()
+        let shellWarning = candidate.manifest.runtime == .shell
+            ? "\nShell 插件将通过 zsh 执行任意本地命令。"
+            : ""
         return Text(
             "\(candidate.manifest.name) \(candidate.manifest.version)\n" +
-                "运行时：\(candidate.manifest.runtime.rawValue)\n命令：\(commands)"
+                "运行时：\(candidate.manifest.runtime.rawValue)\n命令：\(commands)" + shellWarning
         )
     }
 
@@ -179,13 +182,18 @@ private struct PluginIcon: View {
                 .scaledToFit()
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
         } else {
-            let systemName = plugin.manifest.runtime == .python
-                ? "chevron.left.forwardslash.chevron.right"
-                : "curlybraces"
-            Image(systemName: systemName)
+            Image(systemName: iconName)
                 .foregroundStyle(.tint)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+    }
+
+    private var iconName: String {
+        switch plugin.manifest.runtime {
+        case .python: "chevron.left.forwardslash.chevron.right"
+        case .javascript: "curlybraces"
+        case .shell: "terminal"
         }
     }
 }

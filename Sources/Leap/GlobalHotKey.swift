@@ -1,5 +1,6 @@
 @preconcurrency import Carbon.HIToolbox
 import AppKit
+import CoreGraphics
 import Foundation
 import YQLogger
 
@@ -99,21 +100,64 @@ final class GlobalHotKey {
         }
 
         let hotKey = Unmanaged<GlobalHotKey>.fromOpaque(userData).takeUnretainedValue()
-        // Carbon 回调会异步切换到主线程；先记录此刻鼠标位置，避免展示时读到已变化的位置。
-        let triggerLocation = NSEvent.mouseLocation
+        // Carbon 回调会异步切换到主线程；在激活 Leap 前锁定前台窗口所在显示器。
+        let targetDisplayID = GlobalHotKey.frontmostWindowDisplayID()
+        let fallbackLocation = NSEvent.mouseLocation
         Task { @MainActor in
-            hotKey.onPressed(triggerLocation)
+            hotKey.onPressed(targetDisplayID, fallbackLocation)
         }
         return noErr
     }
 
-    private let onPressed: (NSPoint) -> Void
+    private let onPressed: (CGDirectDisplayID?, NSPoint) -> Void
     private var eventHandler: EventHandlerRef?
     private var hotKeyReference: EventHotKeyRef?
     private(set) var shortcut: HotKeyShortcut?
 
-    init(onPressed: @escaping (NSPoint) -> Void) {
+    init(onPressed: @escaping (CGDirectDisplayID?, NSPoint) -> Void) {
         self.onPressed = onPressed
+    }
+
+    private static func frontmostWindowDisplayID() -> CGDirectDisplayID? {
+        guard let frontmostApplication = NSWorkspace.shared.frontmostApplication else {
+            logger.debug("未找到前台应用，将使用鼠标所在屏幕。")
+            return nil
+        }
+        let frontmostPID = Int(frontmostApplication.processIdentifier)
+        let windowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] ?? []
+        guard let window = windowList.first(where: {
+            ($0[kCGWindowOwnerPID as String] as? NSNumber)?.intValue == frontmostPID
+                && ($0[kCGWindowLayer as String] as? NSNumber)?.intValue == 0
+        }),
+            let boundsDictionary = window[kCGWindowBounds as String] as? NSDictionary,
+            let originX = (boundsDictionary["X"] as? NSNumber)?.doubleValue,
+            let originY = (boundsDictionary["Y"] as? NSNumber)?.doubleValue,
+            let width = (boundsDictionary["Width"] as? NSNumber)?.doubleValue,
+            let height = (boundsDictionary["Height"] as? NSNumber)?.doubleValue,
+            width > 0,
+            height > 0
+        else {
+            logger.debug("未找到前台窗口，将使用鼠标所在屏幕。")
+            return nil
+        }
+        let bounds = CGRect(x: originX, y: originY, width: width, height: height)
+
+        var displayID: CGDirectDisplayID = 0
+        var displayCount: UInt32 = 0
+        let result = CGGetDisplaysWithPoint(
+            CGPoint(x: bounds.midX, y: bounds.midY),
+            1,
+            &displayID,
+            &displayCount
+        )
+        guard result == .success, displayCount == 1 else {
+            logger.debug("无法确定前台窗口的显示器，将使用鼠标所在屏幕。")
+            return nil
+        }
+        return displayID
     }
 
     func unregister() {

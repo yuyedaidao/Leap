@@ -8,6 +8,7 @@ public struct BundledRuntimeLocator: Sendable {
             switch self {
             case .missingRuntime(.python): "Leap 随包 Python 运行时不可用。"
             case .missingRuntime(.javascript): "Leap 随包 Node.js 运行时不可用。"
+            case .missingRuntime(.shell): "系统 zsh 运行时不可用。"
             }
         }
     }
@@ -27,6 +28,8 @@ public struct BundledRuntimeLocator: Sendable {
         case .javascript:
             executable = paths.runtimesDirectory
                 .appendingPathComponent("node-24.21.0/bin/node")
+        case .shell:
+            executable = URL(fileURLWithPath: "/bin/zsh")
         }
         guard fileManager.isExecutableFile(atPath: executable.path) else {
             throw RuntimeError.missingRuntime(runtime)

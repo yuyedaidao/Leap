@@ -1,0 +1,19 @@
+{
+  "id": "com.padding.leap.shell-commands",
+  "name": "Shell Commands",
+  "version": "1.0.0",
+  "runtime": "shell",
+  "entry": "main.zsh",
+  "commands": [
+    {
+      "id": "shell.foreground",
+      "title": "Shell 前台示例",
+      "executionMode": "foreground"
+    },
+    {
+      "id": "shell.background",
+      "title": "Shell 后台示例",
+      "executionMode": "background"
+    }
+  ]
+}

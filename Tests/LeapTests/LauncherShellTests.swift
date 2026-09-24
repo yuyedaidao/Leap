@@ -167,7 +167,11 @@ struct LauncherShellTests {
     func jsonRPCProcessRunnerValidation() throws {
         let runner = JSONRPCProcessRunner()
         let shell = URL(fileURLWithPath: "/bin/sh")
-        let validScript = "read request; id=$(printf '%s' \"$request\" | sed -E 's/.*\\\"id\\\":\\\"([^\\\"]+)\\\".*/\\1/'); printf '{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"id\\\":\\\"%s\\\",\\\"result\\\":\\\"ok\\\"}\\n' \"$id\""
+        let validScript = [
+            "read request",
+            "id=$(printf '%s' \"$request\" | sed -E 's/.*\\\"id\\\":\\\"([^\\\"]+)\\\".*/\\1/')",
+            "printf '{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"id\\\":\\\"%s\\\",\\\"result\\\":\\\"ok\\\"}\\n' \"$id\""
+        ].joined(separator: "; ")
 
         #expect(try runner.invoke(executable: shell, arguments: ["-c", validScript], commandID: "echo", query: "hello") == "ok")
         #expect(throws: JSONRPCProcessRunner.RunnerError.invalidResponse) {
@@ -203,6 +207,11 @@ struct LauncherShellTests {
         let webManifest = try validator.load(from: webDirectory)
         #expect(webManifest.webEntry == "index.html")
         #expect(try executor.invoke(manifest: webManifest, pluginDirectory: webDirectory, commandID: "web.echo", query: "来自网页") == "Web: web.echo / 来自网页")
+
+        let shellDirectory = projectRoot.appendingPathComponent("Examples/Plugins/ShellCommands")
+        let shellManifest = try validator.load(from: shellDirectory)
+        #expect(shellManifest.runtime == .shell)
+        #expect(shellManifest.commands.map(\.resolvedExecutionMode) == [.foreground, .background])
     }
 
     @Test("受管插件索引只返回已信任且未变更的副本")
@@ -273,8 +282,31 @@ struct LauncherShellTests {
         let cacheURL = root.appendingPathComponent("index.json")
         try SystemApplicationIndexCache.save(applications, to: cacheURL)
         #expect(SystemApplicationIndexCache.load(from: cacheURL) == applications)
+        try Data(#"{"version":2,"applications":[]}"#.utf8).write(to: cacheURL)
+        #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
         try Data("not-json".utf8).write(to: cacheURL)
         #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
+    }
+
+    @Test("扫描器索引应用包内的本地化名称")
+    func systemApplicationScannerIndexesLocalizedName() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeApplication(
+            named: "WeChat",
+            bundleID: "com.tencent.xinWeChat",
+            in: root,
+            localizedName: "微信"
+        )
+
+        let application = SystemApplicationScanner(
+            roots: [root],
+            preferredLanguages: ["zh-Hans"]
+        ).scan().first
+
+        #expect(application?.name == "微信")
+        #expect(application?.matchRank(for: "微信") == 0)
+        #expect(application?.matchRank(for: "WeChat") == 0)
     }
 
     @Test("统一使用记录迁移旧插件历史并移除失效项目")
@@ -336,7 +368,8 @@ struct LauncherShellTests {
         named name: String,
         bundleID: String,
         in directory: URL,
-        backgroundOnly: Bool = false
+        backgroundOnly: Bool = false,
+        localizedName: String? = nil
     ) throws -> URL {
         let application = directory.appendingPathComponent("\(name).app", isDirectory: true)
         let contents = application.appendingPathComponent("Contents", isDirectory: true)
@@ -354,6 +387,121 @@ struct LauncherShellTests {
         if backgroundOnly { info["LSBackgroundOnly"] = true }
         let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
         try data.write(to: contents.appendingPathComponent("Info.plist"))
+        if let localizedName {
+            let localizedDirectory = contents.appendingPathComponent("Resources/zh-Hans.lproj", isDirectory: true)
+            try FileManager.default.createDirectory(at: localizedDirectory, withIntermediateDirectories: true)
+            let localizedInfo = "\"CFBundleDisplayName\" = \"\(localizedName)\";"
+            try Data(localizedInfo.utf8).write(to: localizedDirectory.appendingPathComponent("InfoPlist.strings"))
+        }
         return application
     }
+}
+
+struct ShellScriptExecutorTests {
+    @Test("Shell 插件支持命令级前后台模式和流式输出")
+    func shellPluginExecutionModesAndOutput() throws {
+        let directory = try makeTemporaryShellDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let entryURL = directory.appendingPathComponent("run.zsh")
+        try Data("print -r -- \"$LEAP_COMMAND_ID:$PWD\"\nprint -u2 -- stderr".utf8).write(to: entryURL)
+
+        let legacyManifest = Data(#"""
+        {"id":"com.example.shell","name":"Shell","version":"1.0.0","runtime":"shell","entry":"run.zsh","commands":[{"id":"shell.run","title":"Shell Run"}]}
+        """#.utf8)
+        let manifest = try JSONDecoder().decode(PluginManifest.self, from: legacyManifest)
+        #expect(manifest.commands.first?.resolvedExecutionMode == .foreground)
+
+        let task = try ShellScriptExecutor().makeForegroundTask(
+            entryURL: entryURL,
+            pluginDirectory: directory,
+            commandID: "shell.run"
+        )
+        let output = OutputCollector()
+        let collectOutput: @Sendable (String) -> Void = { output.append($0) }
+        try task.start(onOutput: collectOutput)
+        try task.waitForCompletion(onOutput: collectOutput)
+
+        let capturedOutput = output.value
+        #expect(capturedOutput.contains("shell.run:"))
+        #expect(capturedOutput.contains(directory.lastPathComponent))
+        #expect(capturedOutput.contains("stderr"))
+    }
+
+    @Test("Shell 后台任务不等待脚本结束")
+    func shellPluginBackgroundTaskStartsWithoutBlocking() throws {
+        let directory = try makeTemporaryShellDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let entryURL = directory.appendingPathComponent("background.zsh")
+        let markerURL = directory.appendingPathComponent("completed")
+        try Data("sleep 0.1\nprint done > completed".utf8).write(to: entryURL)
+
+        try ShellScriptExecutor().startBackground(
+            entryURL: entryURL,
+            pluginDirectory: directory,
+            commandID: "shell.background"
+        )
+        #expect(!FileManager.default.fileExists(atPath: markerURL.path))
+        Thread.sleep(forTimeInterval: 0.2)
+        #expect(FileManager.default.fileExists(atPath: markerURL.path))
+    }
+
+    @Test("Shell 前台任务可停止")
+    func shellPluginForegroundTaskCanStop() async throws {
+        let directory = try makeTemporaryShellDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let entryURL = directory.appendingPathComponent("wait.zsh")
+        try Data("print -r -- started\nsleep 5".utf8).write(to: entryURL)
+        let task = try ShellScriptExecutor().makeForegroundTask(
+            entryURL: entryURL,
+            pluginDirectory: directory,
+            commandID: "shell.wait"
+        )
+        try task.start(onOutput: { _ in })
+        let completion = Task.detached { Result { try task.waitForCompletion(onOutput: { _ in }) } }
+        try await Task.sleep(for: .milliseconds(50))
+        task.cancel()
+
+        let result = await completion.value
+        #expect(throws: ShellScriptError.cancelled) { try result.get() }
+    }
+}
+
+struct SystemApplicationDescriptorTests {
+    @Test("系统应用同时匹配本地化和原始名称")
+    func systemApplicationSearchMatchesLocalizedAndOriginalName() {
+        let application = SystemApplicationDescriptor(
+            name: "微信",
+            bundleIdentifier: "com.tencent.xinWeChat",
+            url: URL(fileURLWithPath: "/Applications/WeChat.app"),
+            alternateNames: ["WeChat"]
+        )
+
+        #expect(application.matchRank(for: "微信") == 0)
+        #expect(application.matchRank(for: "WeChat") == 0)
+        #expect(application.matchRank(for: "weixin") != nil)
+    }
+}
+
+private final class OutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var output = ""
+
+    func append(_ chunk: String) {
+        lock.lock()
+        output += chunk
+        lock.unlock()
+    }
+
+    var value: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return output
+    }
+}
+
+private func makeTemporaryShellDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("LeapShellTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
 }

@@ -4,15 +4,26 @@ public struct PluginManifest: Codable, Equatable, Sendable {
     public enum Runtime: String, Codable, CaseIterable, Sendable {
         case python
         case javascript
+        case shell
     }
 
     public struct Command: Codable, Equatable, Sendable {
+        public enum ExecutionMode: String, Codable, Sendable {
+            case foreground
+            case background
+        }
+
         public let id: String
         public let title: String
+        public let executionMode: ExecutionMode?
 
-        public init(id: String, title: String) {
+        /// 旧插件清单未声明执行模式时，保持原有的等待执行行为。
+        public var resolvedExecutionMode: ExecutionMode { executionMode ?? .foreground }
+
+        public init(id: String, title: String, executionMode: ExecutionMode? = nil) {
             self.id = id
             self.title = title
+            self.executionMode = executionMode
         }
     }
 
@@ -153,6 +164,9 @@ public struct PluginManifestValidator {
         }
 
         if let webEntry = manifest.webEntry {
+            guard manifest.runtime != .shell else {
+                throw ValidationError.invalidWebEntry
+            }
             guard isSafeRelativePath(webEntry) else {
                 throw ValidationError.invalidWebEntry
             }

@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import YQLogger
 import SwiftUI
 
@@ -24,13 +25,20 @@ final class LauncherPanelController {
     }
 
     @discardableResult
-    func present(at triggerLocation: NSPoint? = nil) -> Duration {
+    func present(
+        on targetDisplayID: CGDirectDisplayID? = nil,
+        fallbackLocation: NSPoint? = nil
+    ) -> Duration {
         let start = clock.now
         let panel = panel ?? createPanel()
         self.panel = panel
 
         model.prepareForPresentation()
-        Self.positionForPresentation(panel, triggerLocation: triggerLocation ?? NSEvent.mouseLocation)
+        Self.positionForPresentation(
+            panel,
+            targetDisplayID: targetDisplayID,
+            fallbackLocation: fallbackLocation ?? NSEvent.mouseLocation
+        )
         NSApp.activate(ignoringOtherApps: true)
 
         panel.makeKeyAndOrderFront(nil)
@@ -85,15 +93,20 @@ final class LauncherPanelController {
         return panel
     }
 
-    private static func positionForPresentation(_ panel: NSWindow, triggerLocation: NSPoint) {
-        let screen = NSScreen.screens.first { $0.frame.contains(triggerLocation) }
+    private static func positionForPresentation(
+        _ panel: NSWindow,
+        targetDisplayID: CGDirectDisplayID?,
+        fallbackLocation: NSPoint
+    ) {
+        let screen = targetDisplayID.flatMap(screen(for:))
+            ?? NSScreen.screens.first { $0.frame.contains(fallbackLocation) }
             ?? panel.screen
             ?? NSScreen.main
         guard let screen else {
             logger.error("无法确定启动器应显示的屏幕。")
             return
         }
-        logger.debug("将在 \(screen.localizedName) 显示启动器，触发坐标：\(String(describing: triggerLocation))。")
+        logger.debug("将在 \(screen.localizedName) 显示启动器。")
 
         let visibleFrame = screen.visibleFrame
         let targetCenter = NSPoint(
@@ -106,6 +119,12 @@ final class LauncherPanelController {
                 y: round(targetCenter.y - panel.frame.height / 2)
             )
         )
+    }
+
+    private static func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
+        NSScreen.screens.first {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
+        }
     }
 
     private static func resize(_ panel: NSWindow, toContentHeight height: CGFloat) {

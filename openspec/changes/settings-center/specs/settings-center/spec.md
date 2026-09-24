@@ -12,7 +12,7 @@ Leap SHALL 提供独立的 macOS 设置窗口，启动器齿轮和应用菜单 M
 - **THEN** Leap SHALL 显示或前置独立设置窗口，而不是显示启动器内的临时 sheet
 
 ### Requirement: 启动器偏好
-Leap SHALL 允许用户选择跟随系统、浅色或深色外观，并允许配置包含 Command、Option 或 Control 的全局快捷键。默认快捷键 MUST 为 Option-Command-L；新组合无法注册时 MUST 保留旧组合并显示错误。登录时启动默认 MUST 为关闭。
+Leap SHALL 允许用户选择跟随系统、浅色或深色外观，并允许配置包含 Command、Option 或 Control 的全局快捷键。默认快捷键 MUST 为 Option-Command-L；新组合无法注册时 MUST 保留旧组合并显示错误。登录时启动默认 MUST 为关闭。全局快捷键唤起时，启动器 MUST 优先显示在前台应用最上层可见窗口所在的显示器；窗口跨屏时 MUST 使用窗口中心所在的显示器。无法取得前台窗口或显示器时，启动器 MUST 回退到鼠标所在的显示器。
 
 #### Scenario: 注册冲突的快捷键
 - **WHEN** 用户提交无法注册的全局快捷键
@@ -21,6 +21,10 @@ Leap SHALL 允许用户选择跟随系统、浅色或深色外观，并允许配
 #### Scenario: 系统要求批准登录项
 - **WHEN** 用户开启登录时启动且系统要求额外批准
 - **THEN** Leap SHALL 显示当前状态并提供前往系统登录项设置的入口
+
+#### Scenario: 前台窗口位于副屏
+- **WHEN** 用户在副屏上的前台应用中按下全局快捷键，且鼠标位于主屏
+- **THEN** Leap MUST 显示在副屏
 
 ### Requirement: 受管插件生命周期
 Leap SHALL 显示仍受信任的已安装插件，并允许用户安装或更新本地插件。卸载 MUST 经二次确认后删除受管副本与信任记录，并立即令其不再参与搜索或最近使用。
