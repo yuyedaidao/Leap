@@ -172,12 +172,23 @@ private struct LauncherSearchHeader: View {
                 hideForSettings()
                 openSettings()
             } label: {
-                Image(systemName: "gearshape")
-                    .resizable()
-                    .font(.body)
-                    .frame(width: 30, height: 30)
+                let r: CGFloat = 20
+                let bWidth = r * 2
+                let iWidth = ceil(sqrt(r * r * 2)) * 2
+                ZStack {
+                    Circle()
+                        .fill(.quaternary)
+                    Image("LauncherSettingsIcon")
+                        .resizable()
+                        .scaledToFill()
+                        // 放大系统图标以裁掉 macOS 默认的圆角留白。
+                        .frame(width: iWidth, height: iWidth)
+                }
+                .frame(width: bWidth, height: bWidth)
+                .clipShape(Circle())
+                .contentShape(Circle())
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .accessibilityIdentifier("launcher.settingsButton")
             .accessibilityLabel("设置")
         }

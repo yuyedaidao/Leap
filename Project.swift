@@ -30,11 +30,17 @@ let project = Project(
                 "CFBundleDisplayName": "Leap",
             ]),
             sources: ["Sources/Leap/**"],
-            resources: [.folderReference(path: "Resources/Leap/Runtimes")],
+            resources: [
+                .folderReference(path: "Resources/Leap/Runtimes"),
+                .glob(pattern: "Resources/Leap/Assets.xcassets"),
+            ],
             dependencies: [
                 .target(name: "LeapCore"),
                 .external(name: "YQLogger"),
-            ]
+            ],
+            settings: .settings(base: [
+                "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
+            ])
         ),
         .target(
             name: "LeapTests",
