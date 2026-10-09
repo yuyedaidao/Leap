@@ -6,9 +6,23 @@ import YQLogger
 public final class PluginInvocationCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var cancelled = false
+    private var observers: [UUID: @Sendable () -> Void] = [:]
     public init() {}
     public var isCancelled: Bool { lock.withLock { cancelled } }
-    public func cancel() { lock.withLock { cancelled = true } }
+    public func cancel() {
+        let callbacks = lock.withLock {
+            cancelled = true
+            return Array(observers.values)
+        }
+        callbacks.forEach { $0() }
+    }
+    public func observe(_ callback: @escaping @Sendable () -> Void) -> UUID {
+        let id = UUID()
+        let notify = lock.withLock { observers[id] = callback; return cancelled }
+        if notify { callback() }
+        return id
+    }
+    public func removeObserver(_ id: UUID) { _ = lock.withLock { observers.removeValue(forKey: id) } }
 }
 
 public struct PluginListItem: Codable, Identifiable, Equatable, Sendable {
@@ -22,16 +36,22 @@ public struct PluginListItem: Codable, Identifiable, Equatable, Sendable {
         self.description = description
     }
 
-    public static func decode(_ text: String) throws -> [Self] {
-        struct Result: Decodable { let items: [PluginListItem] }
-        guard text.utf8.count <= 1024 * 1024,
-              let result = try? JSONDecoder().decode(Result.self, from: Data(text.utf8)),
-              result.items.count <= 100,
-              Set(result.items.map(\.id)).count == result.items.count,
-              result.items.allSatisfy({ !$0.id.isEmpty && !$0.title.isEmpty }) else {
+    public static func decode(_ value: PluginValue) throws -> [Self] {
+        guard case let .array(values) = value, values.count <= 100 else {
             throw ListError.invalidResult
         }
-        return result.items
+        // 消息大小已在进程边界限制；直接读取结构化值，避免每批列表再编码和解码 JSON。
+        var identifiers = Set<String>()
+        return try values.map { value in
+            guard case let .object(fields) = value,
+                  let id = fields["id"]?.string, !id.isEmpty,
+                  let title = fields["title"]?.string, !title.isEmpty,
+                  identifiers.insert(id).inserted,
+                  fields["description"] == nil || fields["description"] == .null || fields["description"]?.string != nil else {
+                throw ListError.invalidResult
+            }
+            return Self(id: id, title: title, description: fields["description"]?.string)
+        }
     }
 
     public enum ListError: LocalizedError {
@@ -43,7 +63,9 @@ public struct PluginListItem: Codable, Identifiable, Equatable, Sendable {
 @MainActor
 @Observable
 public final class PluginListSession {
-    public typealias Call = @Sendable (String, String, String?, PluginInvocationCancellation) async throws -> String
+    @MainActor private final class QueryDelivery { var finished = false }
+    public typealias Call = @Sendable (String, String, String?, PluginInvocationCancellation,
+                                      @escaping PluginProcessSession.ListUpdate) async throws -> PluginValue
     public private(set) var items: [PluginListItem] = []
     public private(set) var selectedID: String?
     public private(set) var isLoading = false
@@ -61,7 +83,7 @@ public final class PluginListSession {
     private var queryRunning = false
     private var queryReady = false
 
-    public init(debounce: Duration = .milliseconds(200), call: @escaping Call) {
+    public init(debounce: Duration = .milliseconds(16), call: @escaping Call) {
         self.debounce = debounce
         self.call = call
     }
@@ -73,8 +95,6 @@ public final class PluginListSession {
         debounceTask?.cancel()
         if !isSelecting { cancellation?.cancel() }
         queryReady = false
-        items = []
-        selectedID = nil
         message = nil
         isError = false
         isLoading = true
@@ -103,7 +123,8 @@ public final class PluginListSession {
         cancellation = token
         Task { [weak self, call] in
             let response: Result<String, Error>
-            do { response = .success(try await call("leap.select", query, item.id, token)) } catch { response = .failure(error) }
+            do { response = .success(try await call("select", query, item.id, token, { _ in }).string ?? "") }
+            catch { response = .failure(error) }
             guard let self, isActive else { return }
             isSelecting = false
             if version == revision { display(response) }
@@ -130,7 +151,20 @@ public final class PluginListSession {
         cancellation = token
         Task { [weak self, call] in
             let response: Result<[PluginListItem], Error>
-            do { response = .success(try PluginListItem.decode(await call("leap.query", query, nil, token))) } catch { response = .failure(error) }
+            let session = self
+            let delivery = QueryDelivery()
+            do {
+                let result = try await call("input", query, nil, token) { values in
+                    Task { @MainActor [weak self = session] in
+                        guard let self, !delivery.finished, self.isActive, self.revision == version else { return }
+                        let previous = self.selectedID
+                        self.items = values
+                        self.selectedID = values.contains(where: { $0.id == previous }) ? previous : values.first?.id
+                    }
+                }
+                response = .success(try PluginListItem.decode(result))
+            } catch { response = .failure(error) }
+            delivery.finished = true
             guard let self, isActive else { return }
             queryRunning = false
             // 版本号检查仍需保留：插件可能在取消前已经完成，或测试调用不响应取消。
@@ -138,8 +172,10 @@ public final class PluginListSession {
                 isLoading = false
                 switch response {
                 case let .success(values):
+                    // 最终快照与加载完成一起发布；迟到的分批更新不能把最终结果改回旧批次。
+                    let previous = selectedID
                     items = values
-                    selectedID = values.first?.id
+                    selectedID = values.contains(where: { $0.id == previous }) ? previous : values.first?.id
                 case let .failure(error):
                     display(.failure(error))
                 }

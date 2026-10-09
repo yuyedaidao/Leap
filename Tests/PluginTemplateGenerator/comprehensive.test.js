@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
 const { spawnSync } = require('node:child_process');
+const { session } = require('../PluginSDK/session.cjs');
 const { generate } = require('../../Resources/Leap/OfficialPlugins/TemplateGenerator/main');
 const { validate } = require('../../Resources/Leap/OfficialPlugins/TemplateGenerator/validation');
 function fixture(t, runtime = 'javascript') {
@@ -20,7 +21,7 @@ function fixture(t, runtime = 'javascript') {
         matches: [{ type: 'regex', pattern: '(?i)^hello$', minLength: 1, maxLength: 1000 }] },
     ] };
 }
-for (const runtime of ['javascript', 'python']) test(`${runtime} 多命令按 ID 和方法分派且图标可用`, t => {
+for (const runtime of ['javascript', 'python']) test(`${runtime} 多命令按 ID 和方法分派且图标可用`, async t => {
   const input = fixture(t, runtime);
   const { directory } = generate(input);
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json')));
@@ -33,26 +34,18 @@ for (const runtime of ['javascript', 'python']) test(`${runtime} 多命令按 ID
   assert.equal(manifest.icon, 'icon.png');
   assert.deepEqual(fs.readFileSync(path.join(directory, manifest.icon)).subarray(0, 8),
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-  const executable = runtime === 'javascript' ? process.execPath
-    : path.resolve('Resources/Leap/Runtimes/python-3.14.7/Versions/3.14/bin/python3.14');
-  const call = (commandID, method, itemID) => {
-    const request = { jsonrpc: '2.0', id: 'mixed', method, params: { commandID, query: 'Hello', itemID } };
-    const run = spawnSync(executable, [path.join(directory, manifest.entry)], {
-      input: JSON.stringify(request) + '\n', encoding: 'utf8', timeout: 3000,
-    });
-    assert.equal(run.status, 0, run.stderr);
-    const response = JSON.parse(run.stdout);
-    assert.equal(response.id, 'mixed');
-    return response;
-  };
-  assert.equal(call('direct.run', 'leap.invoke').result, 'hello');
-  assert.equal(call('web.run', 'leap.invoke').result, 'hello');
-  assert.equal(JSON.parse(call('list.run', 'leap.query').result).items[0].title, 'HELLO');
-  assert.equal(call('list.run', 'leap.select', 'lower').result, 'hello');
-  for (const [id, method, item] of [['missing', 'leap.invoke'], ['list.run', 'leap.invoke'],
-    ['web.run', 'leap.query'], ['list.run', 'leap.select', 'missing']]) {
-    assert.equal(call(id, method, item).error.code, -32602);
-  }
+  const plugin = session(path.join(directory, manifest.entry), 'list.run', runtime);
+  try {
+    assert.equal((await plugin.call('invoke', 'Hello', undefined, 'direct.run')).value, 'hello');
+    assert.equal((await plugin.call('invoke', 'Hello', undefined, 'web.run')).value, 'hello');
+    assert.equal((await plugin.call('input', 'Hello')).items[0].title, 'HELLO');
+    assert.equal((await plugin.call('select', 'Hello', 'lower')).value, 'hello');
+    for (const id of ['missing', 'list.run']) {
+      assert.ok((await plugin.call('invoke', 'Hello', undefined, id)).error);
+    }
+    assert.ok((await plugin.call('select', 'Hello', 'missing')).error);
+  } finally { await plugin.close(); }
+
 });
 
 test('Shell 多命令支持后台，未知 ID 非零退出', t => {
@@ -84,7 +77,7 @@ test('空数组、重复ID、非法组合及匹配边界均在写入前拒绝', 
       .map(rule => [{ interaction: 'action', matches: [{ type: 'text', ...rule }] }]),
   ];
   for (const commands of invalid) assert.throws(() => generate({ ...input, commands }));
-  for (const minimumHostVersion of ['1.0.0', '1.2.0', 'invalid']) {
+  for (const minimumHostVersion of ['1.0.0', '1.3.0', 'invalid']) {
     assert.throws(() => generate({ ...input, minimumHostVersion }));
   }
   assert.throws(() => generate({ ...input, id: 'a..b' }));
@@ -131,7 +124,7 @@ test('生成网页使用当前命令与顶部参数，退出后移除监听', as
   assert.equal(button.disabled, true);
   listeners.Enter({ commandID: 'web.second', query: 'initial' });
   await button.click();
-  listeners.InputChange('changed');
+  listeners.InputChange({ text: 'changed' });
   await listeners.Submit('submitted');
   assert.deepEqual(calls, [['web.second', 'initial'], ['web.second', 'submitted']]);
   listeners.Exit();

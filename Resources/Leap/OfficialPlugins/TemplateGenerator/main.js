@@ -58,27 +58,11 @@ function errorMessage(error) {
   return error.message || '生成插件失败。';
 }
 
-function respond(input) {
-  let request;
-  try {
-    request = JSON.parse(input);
-    if (request?.jsonrpc !== '2.0' || request.method !== 'leap.invoke' ||
-        request.params?.commandID !== 'template.generate' || typeof request.params.query !== 'string') {
-      throw new Error('无效的模板生成请求。');
-    }
-    const result = generate(JSON.parse(request.params.query));
-    return { jsonrpc: '2.0', id: request.id, result: JSON.stringify(result) };
-  } catch (error) {
-    const message = errorMessage(error);
-    console.error('模板生成失败：', message);
-    return { jsonrpc: '2.0', id: request?.id ?? null, error: { code: -32602, message } };
-  }
+if (typeof leap !== 'undefined') {
+  leap.onInvoke(({ commandID, query }) => {
+    if (commandID !== 'template.generate') throw new Error('未知模板命令。');
+    try { return JSON.stringify(generate(JSON.parse(query))); }
+    catch (error) { throw new Error(errorMessage(error)); }
+  });
 }
-
-if (require.main === module) {
-  let input = '';
-  process.stdin.setEncoding('utf8');
-  process.stdin.on('data', chunk => { input += chunk; });
-  process.stdin.on('end', () => process.stdout.write(JSON.stringify(respond(input.trim())) + '\n'));
-}
-module.exports = { generate, respond };
+module.exports = { generate };

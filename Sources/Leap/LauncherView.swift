@@ -37,12 +37,7 @@ struct LauncherView: View {
                 exitInteraction: model.exitInteraction
             )
             if let interaction = model.interaction {
-                PluginInteractionView(
-                    session: interaction,
-                    invoke: { commandID, query in
-                        await model.invokeFromWeb(command: interaction.command, commandID: commandID, query: query)
-                    }
-                )
+                PluginInteractionView(session: interaction)
                 .id(interaction.id)
             } else {
                 LauncherContent(

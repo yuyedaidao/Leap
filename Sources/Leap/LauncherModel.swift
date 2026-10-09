@@ -84,6 +84,9 @@ final class LauncherModel {
     private let applicationIndexCacheURL: URL?
     private let applicationLauncher: (URL) async throws -> Void
     private var applicationWatcher: SystemApplicationWatcher?
+    private var actionSession: PluginScriptSession?
+    private var actionID: UUID?
+    private var invocationRevision = 0
     private var foregroundShellTask: ShellScriptTask?
     private var contentMatchers: [String: PluginCommandMatcher] = [:]
 
@@ -96,6 +99,7 @@ final class LauncherModel {
     private(set) var interaction: PluginInteractionSession?
     private(set) var focusRequestID = 0
     var applicationDidLaunch: (() -> Void)?
+    var hideRequested: (() -> Void)?
     var webPluginRequested: ((PluginCommandDescriptor) -> Void)?
 
     init(paths: AppPaths) {
@@ -211,6 +215,8 @@ final class LauncherModel {
     }
 
     func prepareForPresentation() {
+        invocationRevision &+= 1
+        closeActionSession()
         exitInteraction()
         query = ""
         invocationState = .idle
@@ -233,6 +239,8 @@ final class LauncherModel {
     }
 
     func activate(_ command: PluginCommandDescriptor) {
+        invocationRevision &+= 1
+        closeActionSession()
         let configuration = configuration(for: command)
         if configuration.mode == .interactive {
             exitInteraction()
@@ -242,6 +250,10 @@ final class LauncherModel {
                 command: command, configuration: configuration,
                 previousSearch: query, initialInput: initialInput, executor: scriptExecutor
             )
+            interaction?.hostAction = { [weak self] method in
+                if method == "outPlugin" { self?.exitInteraction() }
+                else if method == "hideMainWindow" { self?.exitInteraction(); self?.hideRequested?() }
+            }
             invocationState = .idle
             recordRecent(command)
             if configuration.inputEnabled { requestSearchFocus() }
@@ -259,17 +271,18 @@ final class LauncherModel {
         }
 
         invocationState = .running(command.title)
+        let revision = invocationRevision
         Task { [weak self] in
             guard let self else {
                 return
             }
             let response = await self.run(command, query: self.query)
-            guard !Task.isCancelled else {
+            guard !Task.isCancelled, self.invocationRevision == revision else {
                 return
             }
             switch response {
             case let .success(text):
-                self.invocationState = .result(text)
+                self.invocationState = text.isEmpty ? .idle : .result(text)
                 self.recordRecent(command)
             case let .failure(message):
                 self.invocationState = .failed(message)
@@ -277,15 +290,13 @@ final class LauncherModel {
         }
     }
 
-    func invokeFromWeb(command: PluginCommandDescriptor, commandID: String, query: String) async -> InvocationResponse {
-        guard command.manifest.commands.contains(where: { $0.id == commandID }) else {
-            return .failure("网页请求了未声明的插件命令。")
-        }
-        let response = await run(command, commandID: commandID, query: query)
-        if case .success = response {
-            recordRecent(command)
-        }
-        return response
+    func makeWebSession(_ command: PluginCommandDescriptor) -> PluginInteractionSession {
+        PluginInteractionSession(
+            command: command,
+            configuration: .init(id: command.commandID, title: command.title, mode: .interactive,
+                                 presentation: .web, input: .init(enabled: false)),
+            previousSearch: query, initialInput: "", executor: scriptExecutor
+        )
     }
 
     func dismissWebPlugin() {
@@ -305,30 +316,6 @@ final class LauncherModel {
     private func configuration(for command: PluginCommandDescriptor) -> PluginManifest.Command {
         command.manifest.commands.first(where: { $0.id == command.commandID }) ??
             .init(id: command.commandID, title: command.title)
-    }
-
-    private func run(_ command: PluginCommandDescriptor, query: String) async -> InvocationResponse {
-        await run(command, commandID: command.commandID, query: query)
-    }
-
-    private func run(_ command: PluginCommandDescriptor, commandID: String, query: String) async -> InvocationResponse {
-        guard let scriptExecutor else {
-            return .failure("测试模式不执行插件脚本。")
-        }
-        return await Task.detached(priority: .userInitiated) {
-            do {
-                return .success(try scriptExecutor.invoke(
-                    manifest: command.manifest,
-                    pluginDirectory: command.pluginDirectory,
-                    commandID: commandID,
-                    query: query
-                ))
-            } catch {
-                YQLogger(label: "com.padding.leap/launcher-model")
-                    .error("插件调用失败：\(error.localizedDescription)。")
-                return .failure(error.localizedDescription)
-            }
-        }.value
     }
 
     private func recordRecent(_ command: PluginCommandDescriptor) {
@@ -406,6 +393,71 @@ final class LauncherModel {
     private static func launchSystemApplication(at url: URL) async throws {
         _ = try await NSWorkspace.shared.openApplication(at: url, configuration: .init())
     }
+}
+
+// 动作插件会话与 Shell 执行分别组织，生命周期仍由 LauncherModel 协调。
+extension LauncherModel {
+    private func run(_ command: PluginCommandDescriptor, query: String) async -> InvocationResponse {
+        await run(command, commandID: command.commandID, query: query)
+    }
+
+    private func run(_ command: PluginCommandDescriptor, commandID: String, query: String) async -> InvocationResponse {
+        guard let scriptExecutor else {
+            return .failure("测试模式不执行插件脚本。")
+        }
+        closeActionSession()
+        let id = UUID()
+        actionID = id
+        do {
+            let session = try scriptExecutor.makeSession(
+                manifest: command.manifest, pluginDirectory: command.pluginDirectory, commandID: commandID, query: query,
+                hostCall: { [weak self] method, params in
+                    guard let self else { throw PluginSessionError.closed }
+                    return try await self.handleActionHostCall(method, params: params, id: id)
+                }, onHostReply: { [weak self] method in
+                    Task { @MainActor in
+                        guard let self, self.actionID == id else { return }
+                        if method == "outPlugin" || method == "hideMainWindow" {
+                            self.closeActionSession()
+                            if method == "hideMainWindow" { self.hideRequested?() }
+                        }
+                    }
+                }
+            )
+            actionSession = session
+            defer {
+                session.close()
+                if actionID == id { actionSession = nil; actionID = nil }
+            }
+            return .success(try await session.call("invoke", query: query).string ?? "")
+        } catch {
+            if actionID != id { return .success("") }
+            actionSession = nil
+            actionID = nil
+            Self.logger.error("插件调用失败：\(error.localizedDescription)。")
+            return .failure(error.localizedDescription)
+        }
+    }
+
+    func closeActionSession() {
+        actionID = nil
+        actionSession?.close()
+        actionSession = nil
+    }
+
+    private func handleActionHostCall(_ method: String, params: PluginValue, id: UUID) throws -> PluginValue {
+        guard actionID == id else { throw PluginSessionError.closed }
+        switch method {
+        case "copyText":
+            guard let text = params["text"]?.string else { throw PluginSessionError.invalidMessage }
+            NSPasteboard.general.clearContents()
+            guard NSPasteboard.general.setString(text, forType: .string) else { throw PluginSessionError.plugin("复制失败。") }
+        case "outPlugin", "hideMainWindow": break
+        default: throw PluginSessionError.invalidMessage
+        }
+        return .bool(true)
+    }
+
 }
 
 extension LauncherModel {

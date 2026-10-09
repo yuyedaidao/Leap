@@ -71,6 +71,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         globalHotKey?.unregister()
+        launcherPanelController?.closePluginSessions()
+        PluginProcessSession.terminateAll()
     }
 
     func applyAppearancePreference(_ preference: AppearancePreference) {

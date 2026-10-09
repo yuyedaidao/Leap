@@ -1,0 +1,24 @@
+{
+  "id": "com.padding.leap.number-enumeration",
+  "name": "数字枚举",
+  "version": "1.0.0",
+  "minimumHostVersion": "1.2.0",
+  "runtime": "javascript",
+  "entry": "main.js",
+  "commands": [
+    {
+      "id": "number.enumerate",
+      "title": "数字枚举",
+      "mode": "interactive",
+      "presentation": "list",
+      "input": {
+        "enabled": true,
+        "placeholder": "输入非负整数…"
+      },
+      "keywords": [
+        "数字枚举",
+        "number"
+      ]
+    }
+  ]
+}

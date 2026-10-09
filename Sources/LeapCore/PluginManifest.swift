@@ -1,7 +1,7 @@
 import Foundation
 
 public struct PluginManifest: Codable, Equatable, Sendable {
-    public static let hostVersion = "1.1.0"
+    public static let hostVersion = "1.2.0"
     /// 单位为逻辑点，包含宿主操作栏，不包含系统窗口标题栏。
     public struct WebWindow: Codable, Equatable, Sendable {
         public let width: Int

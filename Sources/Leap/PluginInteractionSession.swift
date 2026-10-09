@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import LeapCore
 import Observation
@@ -10,11 +11,18 @@ final class PluginInteractionSession: Identifiable {
     let command: PluginCommandDescriptor
     let configuration: PluginManifest.Command
     let previousSearch: String
-    let list: PluginListSession?
+    private(set) var list: PluginListSession?
+    private var script: PluginScriptSession?
+    private var startupError: String?
+    var errorMessage: String? {
+        startupError ?? (list == nil && inputCoordinator?.isError == true ? inputCoordinator?.message : nil)
+    }
+    var hostAction: ((String) -> Void)?
     var inputText: String
     private(set) var committedInput: String
     private(set) var submitID = 0
     private(set) var isActive = true
+    private var inputCoordinator: PluginListSession?
     var exitWebPage: (() -> Void)?
 
     init(
@@ -26,27 +34,37 @@ final class PluginInteractionSession: Identifiable {
         self.previousSearch = previousSearch
         inputText = initialInput
         committedInput = initialInput
-        if configuration.presentation == .list {
-            list = PluginListSession { method, query, itemID, cancellation in
-                guard let executor else { throw SessionError.runtimeUnavailable }
-                return try await Task.detached(priority: .userInitiated) {
-                    try executor.invoke(
-                        manifest: command.manifest, pluginDirectory: command.pluginDirectory,
-                        commandID: command.commandID, query: query, method: method,
-                        itemID: itemID, cancellation: cancellation
-                    )
-                }.value
+        do {
+            guard let executor else { throw SessionError.runtimeUnavailable }
+            let script = try executor.makeSession(
+                manifest: command.manifest, pluginDirectory: command.pluginDirectory,
+                commandID: command.commandID, query: initialInput,
+                hostCall: { [weak self] method, params in
+                    guard let self else { throw PluginSessionError.closed }
+                    return try await self.handleHostCall(method, params: params)
+                }, onHostReply: { [weak self] method in
+                    Task { @MainActor in
+                        guard let self, self.isActive else { return }
+                        self.hostAction?(method)
+                    }
+                }
+            )
+            self.script = script
+            let coordinator = PluginListSession { method, query, itemID, cancellation, update in
+                try await script.call(method, query: query, itemID: itemID,
+                                      cancellation: cancellation, onList: update)
             }
-            list?.updateInput(initialInput)
-        } else {
-            list = nil
-        }
+            inputCoordinator = coordinator
+            if configuration.presentation == .list { list = coordinator }
+            coordinator.updateInput(initialInput)
+        } catch { startupError = error.localizedDescription }
+
     }
 
     func commitInput(_ text: String) {
         guard isActive, committedInput != text else { return }
         committedInput = text
-        list?.updateInput(text)
+        inputCoordinator?.updateInput(text)
     }
 
     func submit() {
@@ -58,8 +76,34 @@ final class PluginInteractionSession: Identifiable {
         guard isActive else { return }
         isActive = false
         list?.close()
+        inputCoordinator?.close()
+        script?.close()
         exitWebPage?()
         exitWebPage = nil
+    }
+
+    func invoke(commandID: String, query: String) async -> LauncherModel.InvocationResponse {
+        guard isActive, command.manifest.commands.contains(where: { $0.id == commandID }), let script else {
+            return .failure("插件会话或命令无效。")
+        }
+        do {
+            return .success(try await script.call("invoke", commandID: commandID, query: query).string ?? "")
+        } catch { return .failure(error.localizedDescription) }
+    }
+
+    func handleHostCall(_ method: String, params: PluginValue) throws -> PluginValue {
+        guard isActive else { throw PluginSessionError.closed }
+        switch method {
+        case "copyText":
+            guard let text = params["text"]?.string else { throw PluginSessionError.invalidMessage }
+            NSPasteboard.general.clearContents()
+            guard NSPasteboard.general.setString(text, forType: .string) else {
+                throw PluginSessionError.plugin("复制文本失败。")
+            }
+        case "outPlugin", "hideMainWindow": break
+        default: throw PluginSessionError.plugin("未知宿主接口。")
+        }
+        return .bool(true)
     }
 
     enum SessionError: LocalizedError {

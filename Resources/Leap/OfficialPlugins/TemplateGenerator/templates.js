@@ -15,77 +15,47 @@ esac
 `;
   }
   if (runtime === 'python') return `import json
-import sys
 
 COMMANDS = json.loads(${JSON.stringify(JSON.stringify(config))})
-request = None
-try:
-    request = json.loads(sys.stdin.readline())
-    if not isinstance(request, dict):
-        raise ValueError("请求参数无效。")
-    params = request.get("params")
-    if (request.get("jsonrpc") != "2.0" or not isinstance(request.get("id"), str)
-            or not isinstance(params, dict) or not isinstance(params.get("commandID"), str)
-            or params["commandID"] not in COMMANDS or not isinstance(params.get("query"), str)):
-        raise ValueError("请求参数无效或未知命令。")
-    interaction = COMMANDS[params["commandID"]]
-    query = params["query"]
-    method = request.get("method")
-    conversions = {"upper": query.upper(), "lower": query.lower()}
-    # 列表查询不产生副作用；业务动作只能放在明确选择或调用阶段。
-    if interaction == "list" and method == "leap.query":
-        items = [{"id": "upper", "title": conversions["upper"], "description": "转换为大写"},
-                 {"id": "lower", "title": conversions["lower"], "description": "转换为小写"}] if query else []
-        result = json.dumps({"items": items}, ensure_ascii=False)
-    elif interaction == "list" and method == "leap.select" and isinstance(params.get("itemID"), str) and params["itemID"] in conversions:
-        result = conversions[params["itemID"]]
-    elif interaction != "list" and method == "leap.invoke":
-        result = "hello"
-    else:
-        raise ValueError("未知请求或条目。")
-    response = {"jsonrpc": "2.0", "id": request["id"], "result": result}
-except (ValueError, TypeError) as error:
-    print(str(error), file=sys.stderr)
-    response = {"jsonrpc": "2.0", "id": request.get("id") if isinstance(request, dict) else None,
-                "error": {"code": -32602, "message": str(error)}}
-print(json.dumps(response, ensure_ascii=False), flush=True)
+
+def query(context):
+    if COMMANDS.get(context["commandID"]) != "list":
+        context["setList"]([])
+        return
+    text = context["text"]
+    context["setList"]([
+        {"id": "upper", "title": text.upper(), "description": "转换为大写"},
+        {"id": "lower", "title": text.lower(), "description": "转换为小写"},
+    ] if text else [])
+
+def invoke(context):
+    if context["commandID"] not in COMMANDS or COMMANDS[context["commandID"]] == "list":
+        raise ValueError("未知动作命令。")
+    return "hello"
+
+leap.onInputChange(query)
+leap.onSelect(lambda context: context["item"]["title"])
+leap.onInvoke(invoke)
 `;
   return `'use strict';
 const commands = ${JSON.stringify(config)};
-let input = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', chunk => { input += chunk; });
-process.stdin.on('end', () => {
-  let request;
-  try {
-    request = JSON.parse(input.trim());
-    const params = request?.params;
-    if (request?.jsonrpc !== '2.0' || typeof request.id !== 'string' || !params ||
-        typeof params.commandID !== 'string' || !Object.hasOwn(commands, params.commandID) ||
-        typeof params.query !== 'string') throw new Error('请求参数无效或未知命令。');
-    const interaction = commands[params.commandID];
-    const conversions = { upper: params.query.toUpperCase(), lower: params.query.toLowerCase() };
-    let result;
-    // 查询仅生成候选，选择或调用时才执行业务动作。
-    if (interaction === 'list' && request.method === 'leap.query') {
-      result = JSON.stringify({ items: params.query ? [
-        { id: 'upper', title: conversions.upper, description: '转换为大写' },
-        { id: 'lower', title: conversions.lower, description: '转换为小写' },
-      ] : [] });
-    } else if (interaction === 'list' && request.method === 'leap.select' &&
-        typeof params.itemID === 'string' && Object.hasOwn(conversions, params.itemID)) {
-      result = conversions[params.itemID];
-    } else if (interaction !== 'list' && request.method === 'leap.invoke') {
-      result = 'hello';
-    } else { throw new Error('未知请求或条目。'); }
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
-  } catch (error) {
-    console.error(error.message);
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request?.id ?? null,
-      error: { code: -32602, message: error.message } }) + '\\n');
+leap.onInputChange(({ commandID, text, setList }) => {
+  if (!Object.hasOwn(commands, commandID) || commands[commandID] !== 'list') {
+    // 网页无需原生列表；其输入仍通过网页事件送达。
+    setList([]); return;
   }
+  setList(text ? [
+    { id: 'upper', title: text.toUpperCase(), description: '转换为大写' },
+    { id: 'lower', title: text.toLowerCase(), description: '转换为小写' },
+  ] : []);
+});
+leap.onSelect(({ item }) => item.title);
+leap.onInvoke(({ commandID }) => {
+  if (!Object.hasOwn(commands, commandID) || commands[commandID] === 'list') throw new Error('未知动作命令。');
+  return 'hello';
 });
 `;
+
 }
 
 function webPage() {
@@ -117,7 +87,7 @@ const removeEnter = window.leap.onEnter(context => {
   button.disabled = false;
   output.textContent = query;
 });
-const removeInput = window.leap.onInputChange(value => { query = value; output.textContent = value; });
+const removeInput = window.leap.onInputChange(({ text }) => { query = text; output.textContent = text; });
 const removeSubmit = window.leap.onSubmit(value => { query = value; return invoke(); });
 button.addEventListener('click', invoke);
 window.leap.onExit(() => {
@@ -150,12 +120,17 @@ function filesFor(data) {
       data.commands.map(command => `- ${command.title}（${command.id}）：${command.interaction}，${command.executionMode}`).join('\n') +
       '\n\n直接执行和网页按钮返回 hello；列表查询返回大小写转换候选，选择后返回转换结果。网页通过 onEnter 获取当前命令，通过输入和提交事件接收顶部参数，退出时清理监听。\n\n' +
       (data.runtime === 'shell' ? '使用系统 zsh，通过 LEAP_COMMAND_ID 传递命令；后台输出不显示。\n'
-        : '使用随包运行时，一次 JSON-RPC 请求返回一次同 ID 响应，result 为字符串；日志写标准错误，3 秒内退出。\n') +
-      (data.withUI ? '\n网页内嵌宽度跟随宿主，height 包含宿主操作栏并按屏幕裁剪；width 用于旧独立窗口兼容。\n' : '') +
+        : '宿主注入 leap；交互会话复用进程，退出即释放，动作结果直接返回字符串。日志使用 leap.log；业务回调限时 3 秒。\n') +
+      (data.withUI ? '\n网页内嵌宽度跟随宿主，height 包含宿主操作栏并按屏幕裁剪；width 用于独立窗口兼容。\n' : '') +
       (data.includeIcon ? '\n可替换 icon.png 为自己的 PNG 图标。\n' : '') +
       '\n匹配规则以宿主 NSRegularExpression 为准，生成前使用 macOS Foundation 校验；修改规则后仍需通过安装校验。修改源文件后重新安装；持久数据不要放在受管副本。\n',
   };
   if (data.withUI) files['index.html'] = webPage();
+  if (data.runtime === 'javascript') {
+    files['leap.d.ts'] = require('node:fs').readFileSync(require('node:path').join(__dirname, '../../PluginSDK/leap.d.ts'), 'utf8');
+    files['jsconfig.json'] = JSON.stringify({ compilerOptions: { checkJs: true, target: 'ES2022' },
+      include: ['**/*.js', 'leap.d.ts'] }, null, 2) + '\n';
+  }
   // 默认 PNG 是真实文件，勾选图标后生成结果仍能直接安装，无需新增文件选择桥接。
   if (data.includeIcon) files['icon.png'] = require('node:fs').readFileSync(require('node:path').join(__dirname, 'default-icon.png'));
   return files;

@@ -6,6 +6,10 @@
   "entry": "main.js",
   "webEntry": "index.html",
   "commands": [
-    { "id": "web.echo", "title": "Web Echo" }
-  ]
+    {
+      "id": "web.echo",
+      "title": "Web Echo"
+    }
+  ],
+  "minimumHostVersion": "1.2.0"
 }

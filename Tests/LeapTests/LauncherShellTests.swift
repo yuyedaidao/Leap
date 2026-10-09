@@ -163,27 +163,8 @@ struct LauncherShellTests {
         #expect(try String(contentsOf: destination.appendingPathComponent("main.py"), encoding: .utf8) == "print('original')")
     }
 
-    @Test("JSON-RPC 调用校验响应和超时")
-    func jsonRPCProcessRunnerValidation() throws {
-        let runner = JSONRPCProcessRunner()
-        let shell = URL(fileURLWithPath: "/bin/sh")
-        let validScript = [
-            "read request",
-            "id=$(printf '%s' \"$request\" | sed -E 's/.*\\\"id\\\":\\\"([^\\\"]+)\\\".*/\\1/')",
-            "printf '{\\\"jsonrpc\\\":\\\"2.0\\\",\\\"id\\\":\\\"%s\\\",\\\"result\\\":\\\"ok\\\"}\\n' \"$id\""
-        ].joined(separator: "; ")
-
-        #expect(try runner.invoke(executable: shell, arguments: ["-c", validScript], commandID: "echo", query: "hello") == "ok")
-        #expect(throws: JSONRPCProcessRunner.RunnerError.invalidResponse) {
-            _ = try runner.invoke(executable: shell, arguments: ["-c", "printf 'invalid\\n'"], commandID: "echo", query: "hello")
-        }
-        #expect(throws: JSONRPCProcessRunner.RunnerError.timedOut) {
-            _ = try runner.invoke(executable: shell, arguments: ["-c", "sleep 1"], commandID: "echo", query: "hello", timeout: 0.05)
-        }
-    }
-
     @Test("Python 与 JavaScript 示例插件使用随包运行时返回文本")
-    func bundledRuntimesExecuteExamplePlugins() throws {
+    func bundledRuntimesExecuteExamplePlugins() async throws {
         let projectRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -197,16 +178,16 @@ struct LauncherShellTests {
 
         let pythonDirectory = projectRoot.appendingPathComponent("Examples/Plugins/PythonEcho")
         let pythonManifest = try validator.load(from: pythonDirectory)
-        #expect(try executor.invoke(manifest: pythonManifest, pluginDirectory: pythonDirectory, commandID: "python.echo", query: "测试") == "Python: python.echo / 测试")
+        #expect(try await executor.invoke(manifest: pythonManifest, pluginDirectory: pythonDirectory, commandID: "python.echo", query: "测试").string == "Python: python.echo / 测试")
 
         let javaScriptDirectory = projectRoot.appendingPathComponent("Examples/Plugins/JavaScriptEcho")
         let javaScriptManifest = try validator.load(from: javaScriptDirectory)
-        #expect(try executor.invoke(manifest: javaScriptManifest, pluginDirectory: javaScriptDirectory, commandID: "javascript.echo", query: "测试") == "JavaScript: javascript.echo / 测试")
+        #expect(try await executor.invoke(manifest: javaScriptManifest, pluginDirectory: javaScriptDirectory, commandID: "javascript.echo", query: "测试").string == "JavaScript: javascript.echo / 测试")
 
         let webDirectory = projectRoot.appendingPathComponent("Examples/Plugins/WebEcho")
         let webManifest = try validator.load(from: webDirectory)
         #expect(webManifest.webEntry == "index.html")
-        #expect(try executor.invoke(manifest: webManifest, pluginDirectory: webDirectory, commandID: "web.echo", query: "来自网页") == "Web: web.echo / 来自网页")
+        #expect(try await executor.invoke(manifest: webManifest, pluginDirectory: webDirectory, commandID: "web.echo", query: "来自网页").string == "Web: web.echo / 来自网页")
 
         let shellDirectory = projectRoot.appendingPathComponent("Examples/Plugins/ShellCommands")
         let shellManifest = try validator.load(from: shellDirectory)

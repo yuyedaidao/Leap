@@ -3,7 +3,7 @@ import Testing
 @testable import LeapCore
 
 struct PluginInteractionManifestTests {
-    @Test("旧模式兼容，显式动作与网页共存，关键词和文本规则可安装")
+    @Test("默认动作与网页共存，关键词和文本规则可安装")
     func validModes() throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -53,15 +53,20 @@ struct PluginInteractionManifestTests {
 
     @Test("列表结构验证拒绝重复ID、空标题、过量与错误类型")
     func listValidation() throws {
-        #expect(try PluginListItem.decode(#"{"items":[{"id":"one","title":"结果"}]}"#).first?.id == "one")
-        #expect(try PluginListItem.decode(#"{"items":[]}"#).isEmpty)
-        for value in [#"{"items":[{"id":"","title":"结果"}]}"#, #"{"items":[{"id":"a","title":""}]}"#,
-                      #"{"items":[{"id":"a","title":"1"},{"id":"a","title":"2"}]}"#, #"{"items":"bad"}"#] {
-            #expect(throws: PluginListItem.ListError.self) { try PluginListItem.decode(value) }
+        func decode(_ text: String) throws -> [PluginListItem] {
+            try PluginListItem.decode(JSONDecoder().decode(PluginValue.self, from: Data(text.utf8)))
+        }
+        #expect(try decode(#"[{"id":"one","title":"结果"}]"#).first?.id == "one")
+        #expect(try decode("[]").isEmpty)
+        for value in [#"[{"id":"","title":"结果"}]"#, #"[{"id":"a","title":""}]"#,
+                      #"[{"id":"a","title":"1"},{"id":"a","title":"2"}]"#,
+                      #"[{"id":1,"title":"结果"}]"#, #"[{"id":"a","title":"结果","description":1}]"#,
+                      #""bad""#] {
+            #expect(throws: (any Error).self) { try decode(value) }
         }
         let excessive = (0...100).map { PluginListItem(id: String($0), title: "结果") }
-        let encoded = try JSONEncoder().encode(["items": excessive])
-        #expect(throws: PluginListItem.ListError.self) { try PluginListItem.decode(String(decoding: encoded, as: UTF8.self)) }
+        let value = try JSONDecoder().decode(PluginValue.self, from: JSONEncoder().encode(excessive))
+        #expect(throws: PluginListItem.ListError.self) { try PluginListItem.decode(value) }
     }
 
     private func directory() throws -> URL {
@@ -135,9 +140,10 @@ struct PluginListSessionTests {
 
     @Test("调用失败后输入可恢复正常结果")
     func errorRecovery() async throws {
-        let session = PluginListSession(debounce: .zero) { _, query, _, _ in
+        let session = PluginListSession(debounce: .zero) { _, query, _, _, update in
             if query == "bad" { throw PluginListItem.ListError.invalidResult }
-            return #"{"items":[{"id":"ok","title":"恢复"}]}"#
+            update([PluginListItem(id: "ok", title: "恢复")])
+            return .array([.object(["id": .string("ok"), "title": .string("恢复")])])
         }
         session.updateInput("bad")
         try await Task.sleep(for: .milliseconds(30))
@@ -145,6 +151,19 @@ struct PluginListSessionTests {
         session.updateInput("good")
         try await Task.sleep(for: .milliseconds(30))
         #expect(!session.isError && session.items.first?.id == "ok")
+        session.close()
+    }
+
+    @Test("最终列表与加载完成同时发布，迟到的分批更新不能覆盖")
+    func finalSnapshot() async throws {
+        let session = PluginListSession(debounce: .zero) { _, _, _, _, update in
+            for index in 0..<100 { update([PluginListItem(id: "partial", title: String(index))]) }
+            return .array([.object(["id": .string("final"), "title": .string("完成")])])
+        }
+        session.updateInput("query")
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!session.isLoading && session.items.first?.id == "final")
+        #expect(session.selectedID == "final")
         session.close()
     }
 }
@@ -155,15 +174,15 @@ private actor ListCallProbe {
     var running = 0
     var maximumRunning = 0
 
-    func call(method: String, query: String, itemID: String?, cancellation: PluginInvocationCancellation) async throws -> String {
+    func call(method: String, query: String, itemID: String?, cancellation: PluginInvocationCancellation, update: @escaping PluginProcessSession.ListUpdate) async throws -> PluginValue {
         running += 1
         maximumRunning = max(maximumRunning, running)
         defer { running -= 1 }
-        if method == "leap.query" { queries.append(query) } else { selections.append(itemID ?? "") }
+        if method == "input" { queries.append(query) } else { selections.append(itemID ?? "") }
         // 故意不响应取消，检验宿主自己的过期版本隔离，而不是只依赖插件配合。
         try await Task.sleep(for: .milliseconds(60))
-        if method == "leap.select" { return "selected \(query)" }
-        let data = try JSONEncoder().encode(["items": [PluginListItem(id: "result", title: query)]])
-        return String(decoding: data, as: UTF8.self)
+        if method == "select" { return .string("selected \(query)") }
+        update([PluginListItem(id: "result", title: query)])
+        return .array([.object(["id": .string("result"), "title": .string(query)])])
     }
 }

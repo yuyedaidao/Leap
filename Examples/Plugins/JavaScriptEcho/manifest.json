@@ -5,6 +5,10 @@
   "runtime": "javascript",
   "entry": "main.js",
   "commands": [
-    { "id": "javascript.echo", "title": "JavaScript Echo" }
-  ]
+    {
+      "id": "javascript.echo",
+      "title": "JavaScript Echo"
+    }
+  ],
+  "minimumHostVersion": "1.2.0"
 }

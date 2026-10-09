@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { session } = require('../PluginSDK/session.cjs');
 const { generate } = require('../../Resources/Leap/OfficialPlugins/TemplateGenerator/main');
 const { validate, defaults } = require('../../Resources/Leap/OfficialPlugins/TemplateGenerator/validation');
 
@@ -16,7 +17,7 @@ function fixture(t) {
     runtime: 'javascript', width: '800', height: '600', withUI: true };
 }
 
-test('五种模板生成且脚本按真实运行协议返回 hello', t => {
+test('五种模板生成且脚本按真实运行协议返回 hello', async t => {
   const input = fixture(t);
   for (const [runtime, withUI] of [['javascript', false], ['javascript', true], ['python', false], ['python', true], ['shell', false]]) {
     const directory = path.join(input.directory, `${runtime}-${withUI}`);
@@ -27,17 +28,20 @@ test('五种模板生成且脚本按真实运行协议返回 hello', t => {
     assert.equal(manifest.name, input.name);
     assert.equal(manifest.webEntry, withUI ? 'index.html' : undefined);
     assert.deepEqual(manifest.webWindow, withUI ? { width: 800, height: 600 } : undefined);
-    const request = { jsonrpc: '2.0', id: 'test', method: 'leap.invoke', params: { commandID: input.commandID, query: '' } };
-    const python = path.resolve('Resources/Leap/Runtimes/python-3.14.7/Versions/3.14/bin/python3.14');
-    const executable = runtime === 'javascript' ? process.execPath : runtime === 'python' ? python : '/bin/zsh';
-    const run = spawnSync(executable, [path.join(result.directory, manifest.entry)], {
-      input: JSON.stringify(request) + '\n', encoding: 'utf8',
-      env: { ...process.env, LEAP_COMMAND_ID: input.commandID },
-    });
-    assert.equal(run.status, 0, run.stderr);
-    assert.equal(run.stderr, '');
-    if (runtime === 'shell') assert.equal(run.stdout, 'hello\n');
-    else assert.deepEqual(JSON.parse(run.stdout), { jsonrpc: '2.0', id: 'test', result: 'hello' });
+    if (runtime === 'shell') {
+      const run = spawnSync('/bin/zsh', [path.join(result.directory, manifest.entry)], {
+        encoding: 'utf8', env: { ...process.env, LEAP_COMMAND_ID: input.commandID },
+      });
+      assert.equal(run.status, 0, run.stderr);
+      assert.equal(run.stdout, 'hello\n');
+    } else {
+      const plugin = session(path.join(result.directory, manifest.entry), input.commandID, runtime);
+      try {
+        if (withUI) assert.equal((await plugin.call('input', '')).error, undefined);
+        assert.equal((await plugin.call('invoke')).value, 'hello');
+      }
+      finally { await plugin.close(); }
+    }
     if (withUI) assert.ok(fs.readFileSync(path.join(result.directory, 'index.html'), 'utf8').includes('window.leap.invoke'));
   }
 });
@@ -121,16 +125,18 @@ test('回滚时保留用户替换的文件，未写入目标之外的位置', t 
   assert.equal(fs.readFileSync(path.join(input.directory, 'manifest.json'), 'utf8'), 'user replacement');
 });
 
-test('目录缺失、非目录及损坏 JSON-RPC 返回可读错误', t => {
+test('目录缺失、非目录及损坏输入返回可读错误', async t => {
   const input = fixture(t);
   assert.throws(() => generate({ ...input, directory: path.join(input.directory, 'missing') }), { code: 'ENOENT' });
   const file = path.join(input.directory, 'file');
   fs.writeFileSync(file, 'keep');
   assert.throws(() => generate({ ...input, directory: file }), /不是目录/);
-  const run = spawnSync(process.execPath, [path.resolve('Resources/Leap/OfficialPlugins/TemplateGenerator/main.js')], { input: '{}\n', encoding: 'utf8' });
-  const response = JSON.parse(run.stdout);
-  assert.equal(response.error.message, '无效的模板生成请求。');
-  assert.ok(run.stderr.includes('模板生成失败'));
+  const plugin = session(path.resolve('Resources/Leap/OfficialPlugins/TemplateGenerator/main.js'), 'template.generate');
+  try {
+    const response = await plugin.call('invoke', '{}');
+    assert.ok(response.error);
+    assert.ok(plugin.stderr.length > 0);
+  } finally { await plugin.close(); }
   assert.equal(validate(input).id, input.id);
 });
 

@@ -2,7 +2,7 @@
   "id": "com.padding.leap.text-convert",
   "name": "文本转换",
   "version": "1.0.0",
-  "minimumHostVersion": "1.1.0",
+  "minimumHostVersion": "1.2.0",
   "runtime": "javascript",
   "entry": "main.js",
   "commands": [

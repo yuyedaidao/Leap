@@ -21,10 +21,17 @@ final class LauncherPanelController {
 
     init(model: LauncherModel) {
         self.model = model
+        model.hideRequested = { [weak self] in self?.panel?.orderOut(nil) }
         model.applicationDidLaunch = { [weak self] in self?.hideAfterApplicationLaunch() }
         model.webPluginRequested = { [weak self] command in
             self?.presentWebPlugin(command)
         }
+    }
+
+    func closePluginSessions() {
+        model.exitInteraction()
+        model.closeActionSession()
+        pluginWindowController.close()
     }
 
     var isVisible: Bool {
@@ -71,15 +78,12 @@ final class LauncherPanelController {
         let screen = panel?.screen
         panel?.orderOut(nil)
         pluginWindowController.present(
-            command: command,
+            command: command, session: model.makeWebSession(command),
             on: screen,
-            invoke: { [weak model] commandID, query in
-                guard let model else { return .failure("插件宿主已关闭。") }
-                return await model.invokeFromWeb(command: command, commandID: commandID, query: query)
-            },
-            onClose: { [weak self] in
+            onClose: { [weak self] restore in
                 guard let self else { return }
                 model.dismissWebPlugin()
+                guard restore else { return }
                 let keyboardClose = NSApp.currentEvent.map { $0.type == .keyDown || $0.type == .keyUp } ?? false
                 // 按键关闭主窗口时 AppKit 会异步归还焦点；让这次交接结束后再恢复非激活面板。
                 Task { @MainActor [weak self] in

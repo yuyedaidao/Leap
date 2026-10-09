@@ -1,8 +1,76 @@
+import AppKit
 import Foundation
 import LeapCore
 import XCTest
 
 final class PluginInteractionUITests: XCTestCase {
+    @MainActor
+    func testSDKCopyExitAndHide() throws {
+        let previousText = NSPasteboard.general.string(forType: .string)
+        defer {
+            NSPasteboard.general.clearContents()
+            if let previousText { NSPasteboard.general.setString(previousText, forType: .string) }
+        }
+        let script = """
+        leap.onInputChange(({setList}) => setList([
+          {id:'copy',title:'复制'}, {id:'exit',title:'退出'}, {id:'hide',title:'隐藏'}
+        ]));
+        leap.onSelect(async ({item}) => {
+          if (item.id === 'copy') { await leap.copyText('Leap SDK 测试'); return '已复制'; }
+          if (item.id === 'exit') await leap.outPlugin();
+          if (item.id === 'hide') await leap.hideMainWindow();
+        });
+        """
+        let app = try launch(source: "NumberEnumeration", openPlugin: true, script: script)
+        XCTAssertTrue(app.buttons["plugin.result.copy"].waitForExistence(timeout: 5))
+        app.buttons["plugin.result.copy"].click()
+        XCTAssertTrue(app.staticTexts["plugin.listFeedback"].waitForExistence(timeout: 5))
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "Leap SDK 测试")
+        app.buttons["plugin.result.exit"].click()
+        let search = app.textFields["launcher.searchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.click()
+        search.typeText("number")
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        XCTAssertTrue(app.buttons["plugin.result.hide"].waitForExistence(timeout: 5))
+        app.buttons["plugin.result.hide"].click()
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: search)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        XCTAssertFalse(app.textFields["plugin.parameterInput"].exists)
+    }
+
+    @MainActor
+    func testNumberEnumerationListAndSelection() throws {
+        // 使用真实示例经安装器校验并安装，覆盖清单到宿主列表的完整链路。
+        let app = try launch(source: "NumberEnumeration")
+        let search = app.textFields["launcher.searchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.click()
+        search.typeText("number")
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        let parameter = app.textFields["plugin.parameterInput"]
+        XCTAssertTrue(parameter.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["launcher.settingsButton"].exists)
+        parameter.typeText("123")
+        XCTAssertTrue(app.buttons["plugin.result.5"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["plugin.result.0"].label.contains("标题 0"))
+        XCTAssertFalse(app.buttons["plugin.result.6"].exists)
+        parameter.typeKey(XCUIKeyboardKey.downArrow, modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
+        let feedback = app.staticTexts["plugin.listFeedback"]
+        XCTAssertTrue(feedback.waitForExistence(timeout: 5))
+        XCTAssertEqual(feedback.value as? String ?? feedback.label, "已选择：标题 1")
+        parameter.typeKey("a", modifierFlags: .command)
+        parameter.typeText("19")
+        let empty = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.buttons["plugin.result.0"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [empty], timeout: 5), .completed)
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertEqual(search.value as? String, "number")
+    }
+
     @MainActor
     func testKeywordEntryContinuousInputSelectionAndContentEntry() throws {
         let app = try launch(source: "TextConvert")
@@ -138,7 +206,7 @@ final class PluginInteractionUITests: XCTestCase {
     @MainActor
     private func launch(
         source: String, action: Bool = false, events: Bool = false,
-        pluginName: String? = nil, inputEnabled: Bool = true, openPlugin: Bool = false
+        pluginName: String? = nil, inputEnabled: Bool = true, openPlugin: Bool = false, script: String? = nil
     ) throws -> XCUIApplication {
         continueAfterFailure = false
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("LeapInteractionUI-\(UUID())")
@@ -163,7 +231,7 @@ final class PluginInteractionUITests: XCTestCase {
                 <p id="enter"></p><p id="input"></p><p id="submit"></p>
                 <script>
                 window.leap.onEnter(value => document.getElementById('enter').textContent = 'entered ' + value.commandID);
-                window.leap.onInputChange(value => document.getElementById('input').textContent = 'input ' + value);
+                window.leap.onInputChange(({ text }) => document.getElementById('input').textContent = 'input ' + text);
                 window.leap.onSubmit(value => document.getElementById('submit').textContent = 'submit ' + value);
                 </script></body></html>
                 """
@@ -172,6 +240,7 @@ final class PluginInteractionUITests: XCTestCase {
             manifest["commands"] = [command]
             try JSONSerialization.data(withJSONObject: manifest).write(to: manifestURL)
         }
+        if let script { try Data(script.utf8).write(to: directory.appendingPathComponent("main.js")) }
         let paths = AppPaths(applicationSupportDirectory: root.appendingPathComponent("Support"), resourceDirectory: root)
         let installer = PluginInstaller(paths: paths)
         let candidate = try installer.inspect(sourceDirectory: directory)

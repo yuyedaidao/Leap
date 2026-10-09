@@ -7,7 +7,7 @@ struct PluginTemplateGeneratorTests {
         (PluginManifest.Runtime.javascript, "action"), (.javascript, "web"), (.javascript, "list"),
         (.python, "action"), (.python, "web"), (.python, "list"), (.shell, "action")
     ])
-    func generatedTemplates(runtime: PluginManifest.Runtime, interaction: String) throws {
+    func generatedTemplates(runtime: PluginManifest.Runtime, interaction: String) async throws {
         let withUI = interaction == "web"
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -31,7 +31,7 @@ struct PluginTemplateGeneratorTests {
             "width": 800, "height": 600
         ]
         let query = String(decoding: try JSONSerialization.data(withJSONObject: values), as: UTF8.self)
-        _ = try executor.invoke(
+        _ = try await executor.invoke(
             manifest: generator, pluginDirectory: generatorDirectory, commandID: "template.generate", query: query
         )
         let manifest = try validator.load(from: generatedDirectory)
@@ -42,7 +42,7 @@ struct PluginTemplateGeneratorTests {
         #expect(manifest.webWindow == (withUI ? .init(width: 800, height: 600) : nil))
         #expect(manifest.commands.first?.resolvedExecutionMode == .foreground)
         #expect(manifest.commands.first?.mode == (interaction == "action" ? .action : .interactive))
-        #expect(manifest.minimumHostVersion == "1.1.0")
+        #expect(manifest.minimumHostVersion == "1.2.0")
         let installer = PluginInstaller(paths: paths)
         let candidate = try installer.inspect(sourceDirectory: generatedDirectory)
         let installedDirectory = try installer.install(candidate, confirmed: true)
@@ -52,21 +52,18 @@ struct PluginTemplateGeneratorTests {
                 at: installedDirectory.appendingPathComponent(manifest.entry), commandID: manifest.commands[0].id
             )
         } else if interaction == "list" {
-            let result = try executor.invoke(
-                manifest: manifest, pluginDirectory: installedDirectory,
-                commandID: "\(manifest.id).run", query: "Hello", method: "leap.query"
-            )
-            let items = try PluginListItem.decode(result)
-            #expect(items.map(\.title) == ["HELLO", "hello"])
-            #expect(try executor.invoke(
-                manifest: manifest, pluginDirectory: installedDirectory,
-                commandID: "\(manifest.id).run", query: "Hello", method: "leap.select", itemID: "upper"
-            ) == "HELLO")
+            let session = try executor.makeSession(manifest: manifest, pluginDirectory: installedDirectory,
+                                                  commandID: "\(manifest.id).run", query: "Hello")
+            defer { session.close() }
+            let items = TestListUpdates()
+            _ = try await session.call("input", query: "Hello", onList: items.update)
+            #expect(items.values.map(\.title) == ["HELLO", "hello"])
+            #expect(try await session.call("select", query: "Hello", itemID: "upper").string == "HELLO")
         } else {
-            #expect(try executor.invoke(
+            #expect(try await executor.invoke(
                 manifest: manifest, pluginDirectory: installedDirectory,
                 commandID: "\(manifest.id).run", query: ""
-            ) == "hello")
+            ).string == "hello")
         }
         #expect(candidate.manifest == manifest)
     }
@@ -74,7 +71,7 @@ struct PluginTemplateGeneratorTests {
     @Test("多命令搜索、输入与图标通过原生校验并实际运行", arguments: [
         PluginManifest.Runtime.javascript, .python
     ])
-    func multipleCommands(runtime: PluginManifest.Runtime) throws {
+    func multipleCommands(runtime: PluginManifest.Runtime) async throws {
         let project = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let destination = FileManager.default.temporaryDirectory
@@ -102,7 +99,7 @@ struct PluginTemplateGeneratorTests {
             "runtime": runtime.rawValue, "commands": commands, "includeIcon": true, "width": 800, "height": 600
         ]
         let query = String(decoding: try JSONSerialization.data(withJSONObject: values), as: UTF8.self)
-        _ = try executor.invoke(manifest: generator, pluginDirectory: source,
+        _ = try await executor.invoke(manifest: generator, pluginDirectory: source,
                                 commandID: "template.generate", query: query)
         let manifest = try PluginManifestValidator().load(from: generated)
         #expect(manifest.commands.count == 3)
@@ -113,15 +110,16 @@ struct PluginTemplateGeneratorTests {
         let installer = PluginInstaller(paths: paths)
         let installed = try installer.install(installer.inspect(sourceDirectory: generated), confirmed: true)
         for commandID in ["direct.run", "web.run"] {
-            #expect(try executor.invoke(manifest: manifest, pluginDirectory: installed,
-                                        commandID: commandID, query: "Hello") == "hello")
+            #expect(try await executor.invoke(manifest: manifest, pluginDirectory: installed,
+                                        commandID: commandID, query: "Hello").string == "hello")
         }
-        let list = try executor.invoke(manifest: manifest, pluginDirectory: installed,
-                                       commandID: "list.run", query: "Hello", method: "leap.query")
-        #expect(try PluginListItem.decode(list).map(\.title) == ["HELLO", "hello"])
-        #expect(try executor.invoke(manifest: manifest, pluginDirectory: installed,
-                                    commandID: "list.run", query: "Hello",
-                                    method: "leap.select", itemID: "lower") == "hello")
+        let session = try executor.makeSession(manifest: manifest, pluginDirectory: installed,
+                                              commandID: "list.run", query: "Hello")
+        defer { session.close() }
+        let items = TestListUpdates()
+        _ = try await session.call("input", query: "Hello", onList: items.update)
+        #expect(items.values.map(\.title) == ["HELLO", "hello"])
+        #expect(try await session.call("select", query: "Hello", itemID: "lower").string == "hello")
     }
 
     private func verifyShell(at entry: URL, commandID: String) throws {
@@ -139,4 +137,12 @@ struct PluginTemplateGeneratorTests {
         #expect(process.terminationStatus == 0)
         #expect(String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self) == "hello\n")
     }
+}
+
+/// 测试跨队列收集真实流式列表更新。
+final class TestListUpdates: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [PluginListItem] = []
+    var values: [PluginListItem] { lock.withLock { storage } }
+    func update(_ values: [PluginListItem]) { lock.withLock { storage = values } }
 }

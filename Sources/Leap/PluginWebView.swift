@@ -6,7 +6,7 @@ import YQLogger
 
 struct PluginWebContent: View {
     let command: PluginCommandDescriptor
-    let invoke: (String, String) async -> LauncherModel.InvocationResponse
+    let session: PluginInteractionSession
     let dismiss: () -> Void
 
     var body: some View {
@@ -24,7 +24,7 @@ struct PluginWebContent: View {
                 PluginWebView(
                     pageURL: command.pluginDirectory.appendingPathComponent(webEntry),
                     readAccessDirectory: command.pluginDirectory,
-                    invoke: invoke
+                    invoke: { await session.invoke(commandID: $0, query: $1) }, interaction: session
                 )
             } else {
                 ContentUnavailableView("网页入口不可用", systemImage: "exclamationmark.triangle")
@@ -53,45 +53,13 @@ struct PluginWebView: NSViewRepresentable {
         let configuration = WKWebViewConfiguration()
         let controller = configuration.userContentController
         controller.addUserScript(WKUserScript(
-            source: """
-            (() => {
-            const context = \(context.coordinator.initialContext);
-            const listeners = { enter: new Set(), input: new Set(), submit: new Set(), exit: new Set() };
-            let active = true;
-            const deliver = (callback, value) => { try { callback(value); } catch (error) { console.error(error); } };
-            const subscribe = (event, callback) => {
-                if (typeof callback !== 'function') throw new TypeError('事件监听器必须是函数。');
-                listeners[event].add(callback);
-                if (event === 'enter' && context && active) queueMicrotask(() => {
-                    if (active && listeners.enter.has(callback)) deliver(callback, { ...context });
-                });
-                return () => listeners[event].delete(callback);
-            };
-            window.__leapDispatch = (event, value) => {
-                if (!active) return;
-                if (event === 'input' && context) context.query = value;
-                if (event === 'exit') active = false;
-                for (const callback of listeners[event] || []) deliver(callback, value);
-                if (!active) for (const set of Object.values(listeners)) set.clear();
-            };
-            window.leap = Object.freeze({
-                invoke: (commandID, query = '') =>
-                    window.webkit.messageHandlers.leapInvoke.postMessage({ commandID, query }),
-                chooseDirectory: () => window.webkit.messageHandlers.leapDirectory.postMessage({ action: 'choose' }),
-                openDirectory: (path) =>
-                    window.webkit.messageHandlers.leapDirectory.postMessage({ action: 'open', path }),
-                onEnter: callback => subscribe('enter', callback),
-                onInputChange: callback => subscribe('input', callback),
-                onSubmit: callback => subscribe('submit', callback),
-                onExit: callback => subscribe('exit', callback)
-            });
-            })();
-            """,
+            source: context.coordinator.sdkSource,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
         controller.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: "leapInvoke")
         controller.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: "leapDirectory")
+        controller.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: "leapHost")
 
         let webView = PluginPageWebView(frame: .zero, configuration: configuration)
         webView.focusesOnAttach = interaction?.configuration.inputEnabled == false
@@ -111,6 +79,7 @@ struct PluginWebView: NSViewRepresentable {
         let controller = webView.configuration.userContentController
         controller.removeScriptMessageHandler(forName: "leapInvoke", contentWorld: .page)
         controller.removeScriptMessageHandler(forName: "leapDirectory", contentWorld: .page)
+        controller.removeScriptMessageHandler(forName: "leapHost", contentWorld: .page)
     }
 
     @MainActor
@@ -120,6 +89,14 @@ struct PluginWebView: NSViewRepresentable {
         private let invoke: (String, String) async -> LauncherModel.InvocationResponse
         private weak var directoryWindow: NSWindow?
         let initialContext: String
+        private weak var interaction: PluginInteractionSession?
+        var sdkSource: String {
+            guard let url = Bundle.main.url(forResource: "web", withExtension: "js", subdirectory: "PluginSDK"),
+                  let source = try? String(contentsOf: url, encoding: .utf8) else {
+                return "throw new Error(\"Leap SDK 资源不可用。\");"
+            }
+            return "window.__leapContext = \(initialContext);\n" + source
+        }
         private var lastQuery: String?
         private var latestQuery: String?
         private var lastSubmitID = 0
@@ -154,6 +131,7 @@ struct PluginWebView: NSViewRepresentable {
             self.pageURL = pageURL.resolvingSymlinksInPath().standardizedFileURL
             self.readAccessDirectory = readAccessDirectory.standardizedFileURL
             self.invoke = invoke
+            self.interaction = interaction
             if let interaction {
                 let data = try? JSONSerialization.data(withJSONObject: [
                     "commandID": interaction.command.commandID, "query": interaction.committedInput
@@ -223,6 +201,26 @@ struct PluginWebView: NSViewRepresentable {
             didReceive message: WKScriptMessage,
             replyHandler: @escaping @MainActor @Sendable (Any?, String?) -> Void
         ) {
+            guard PluginDirectorySession.isAllowedPage(
+                message.frameInfo.request.url, mainFrame: message.frameInfo.isMainFrame, expectedPage: pageURL
+            ), interaction?.isActive == true else {
+                replyHandler(nil, "接口只允许当前插件主页面调用。"); return
+            }
+            if message.name == "leapHost" {
+                guard let body = message.body as? [String: Any], let method = body["method"] as? String,
+                      let params = body["params"], JSONSerialization.isValidJSONObject(params),
+                      let data = try? JSONSerialization.data(withJSONObject: params), data.count <= 1024 * 1024,
+                      let value = try? JSONDecoder().decode(PluginValue.self, from: data), let interaction else {
+                    replyHandler(nil, "宿主接口参数无效。"); return
+                }
+                do {
+                    let result = try interaction.handleHostCall(method, params: value)
+                    replyHandler(result == .bool(true), nil)
+                    // 回复已提交给 WebKit 后才关闭页面，避免调用者永远等不到确认。
+                    Task { @MainActor [weak interaction] in interaction?.hostAction?(method) }
+                } catch { replyHandler(nil, error.localizedDescription) }
+                return
+            }
             if message.name == "leapDirectory" {
                 handleDirectoryMessage(message, replyHandler: replyHandler)
                 return

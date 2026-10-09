@@ -5,6 +5,10 @@
   "runtime": "python",
   "entry": "main.py",
   "commands": [
-    { "id": "python.echo", "title": "Python Echo" }
-  ]
+    {
+      "id": "python.echo",
+      "title": "Python Echo"
+    }
+  ],
+  "minimumHostVersion": "1.2.0"
 }

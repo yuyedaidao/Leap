@@ -64,13 +64,7 @@ final class LeapUITests: XCTestCase {
         )
         try JSONEncoder().encode(manifest).write(to: sourceDirectory.appendingPathComponent("manifest.json"))
         let script = """
-        let input = "";
-        process.stdin.setEncoding("utf8");
-        process.stdin.on("data", chunk => input += chunk);
-        process.stdin.on("end", () => {
-          const request = JSON.parse(input.trim());
-          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: request.params.commandID }) + "\\n");
-        });
+        leap.onInvoke(({ commandID }) => commandID);
         """
         try Data(script.utf8).write(to: sourceDirectory.appendingPathComponent("main.js"))
 
@@ -127,13 +121,7 @@ final class LeapUITests: XCTestCase {
         )
         try JSONEncoder().encode(manifest).write(to: sourceDirectory.appendingPathComponent("manifest.json"))
         let script = """
-        let input = "";
-        process.stdin.setEncoding("utf8");
-        process.stdin.on("data", chunk => input += chunk);
-        process.stdin.on("end", () => {
-          const request = JSON.parse(input.trim());
-          process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: "完成" }) + "\\n");
-        });
+        leap.onInvoke(() => "完成");
         """
         try Data(script.utf8).write(to: sourceDirectory.appendingPathComponent("main.js"))
 

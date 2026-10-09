@@ -8,21 +8,30 @@ import YQLogger
 @MainActor
 final class PluginWebWindowController: NSObject, NSWindowDelegate {
     private var window: PluginWindow?
-    private var onClose: (() -> Void)?
+    private var session: PluginInteractionSession?
+    private var onClose: ((Bool) -> Void)?
+    private var restoresLauncher = true
     private var minimumContentSize = NSSize(width: 400, height: 300)
     private let logger = YQLogger(label: "com.padding.leap/plugin-window")
 
     func present(
         command: PluginCommandDescriptor,
+        session: PluginInteractionSession,
         on screen: NSScreen?,
-        invoke: @escaping (String, String) async -> LauncherModel.InvocationResponse,
-        onClose: @escaping () -> Void
+        onClose: @escaping (Bool) -> Void
     ) {
         let window = window ?? makeWindow()
         self.window = window
+        self.session?.close()
+        self.session = session
+        restoresLauncher = true
+        session.hostAction = { [weak self] method in
+            if method == "hideMainWindow" { self?.restoresLauncher = false }
+            if method == "outPlugin" || method == "hideMainWindow" { self?.window?.close() }
+        }
         self.onClose = onClose
         window.title = command.title
-        let content = PluginWebContent(command: command, invoke: invoke) { [weak window] in
+        let content = PluginWebContent(command: command, session: session) { [weak window] in
             window?.close()
         }
         let hosting = NSHostingController(rootView: content)
@@ -40,10 +49,14 @@ final class PluginWebWindowController: NSObject, NSWindowDelegate {
         logger.debug("已关闭网页插件窗口。")
         let callback = onClose
         onClose = nil
+        session?.close()
+        session = nil
         // 关闭时释放网页及其桥接授权，不让隐藏页面继续占用资源或发送请求。
         window?.contentViewController = nil
-        callback?()
+        callback?(restoresLauncher)
     }
+
+    func close() { restoresLauncher = false; window?.close(); session?.close(); session = nil }
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
         // NSHostingController 布局可能重设系统最小尺寸；拖动边界仍由宿主明确限制。

@@ -4,17 +4,18 @@ import SwiftUI
 
 struct PluginInteractionView: View {
     let session: PluginInteractionSession
-    let invoke: (String, String) async -> LauncherModel.InvocationResponse
 
     var body: some View {
         VStack(spacing: 12) {
-            if let list = session.list {
+            if let error = session.errorMessage {
+                Text(error).foregroundStyle(.red)
+            } else if let list = session.list {
                 PluginResultList(session: list)
             } else if let entry = session.command.manifest.webEntry {
                 PluginWebView(
                     pageURL: session.command.pluginDirectory.appendingPathComponent(entry),
                     readAccessDirectory: session.command.pluginDirectory,
-                    invoke: invoke, interaction: session,
+                    invoke: { await session.invoke(commandID: $0, query: $1) }, interaction: session,
                     committedInput: session.committedInput, submitID: session.submitID
                 )
                 .frame(height: webHeight)
@@ -102,7 +103,7 @@ private struct PluginResultList: View {
                                     )
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(session.isSelecting)
+                                .disabled(session.isSelecting || session.isLoading)
                                 .id(item.id)
                                 .accessibilityIdentifier("plugin.result.\(item.id)")
                             }
