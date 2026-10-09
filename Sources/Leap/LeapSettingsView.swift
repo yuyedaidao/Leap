@@ -20,6 +20,7 @@ struct LeapSettingsRootView: View {
                     .frame(width: 620, height: 420)
             }
         }
+        .background(SettingsWindowRegistration(presenter: appDelegate.settingsWindowPresenter))
         .onAppear {
             appDelegate.applyAppearancePreference(currentAppearance)
         }

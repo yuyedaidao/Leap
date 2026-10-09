@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>创建插件模板</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="validation.js" defer></script>
+  <script src="ui.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><span class="eyebrow">LEAP · 开发工具</span><h1>创建插件模板</h1>
+      <p>填写信息，生成一个可以在 Leap 中安装的插件。</p></header>
+    <form id="generator">
+      <fieldset id="fields">
+        <label for="directory">目录</label>
+        <div class="directory"><input id="directory" name="directory" readonly placeholder="选择或新建插件目录" required>
+          <button type="button" id="choose">选择目录…</button></div>
+        <p class="hint">模板直接生成到所选空目录；可在选择窗口中新建文件夹。</p>
+        <div class="grid">
+          <label>插件名称<input id="pluginName" name="name" required placeholder="我的插件"></label>
+          <label>版本<input name="version" required value="1.0.0" pattern="[0-9]+\.[0-9]+\.[0-9]+" placeholder="1.0.0"></label>
+          <label>插件类型<select id="runtime" name="runtime"><option value="javascript">JavaScript</option><option value="python">Python</option><option value="shell">Shell（zsh）</option></select></label>
+          <label id="widthOption">独立窗口兼容宽度<input id="width" name="width" type="number" min="400" step="1" value="800" required></label>
+          <label id="heightOption">内容默认高度<input id="height" name="height" type="number" min="300" step="1" value="600" required></label>
+        </div>
+        <p id="runtimeHint" class="hint">脚本按命令 ID 分派；JavaScript/Python 不支持后台执行。</p>
+        <h2>命令配置</h2>
+        <div id="commands">
+          <section id="firstCommand" class="command-card" data-ordinal="1">
+            <h3>命令 1</h3>
+            <div class="grid">
+              <label>命令 ID<input id="commandID" data-field="id" placeholder="默认使用插件 ID.run"></label>
+              <label>命令标题<input id="commandTitle" data-field="title" placeholder="默认使用插件名称"></label>
+              <label>命令交互<select id="interaction" data-field="interaction"><option value="web">自定义网页 UI</option><option value="list">持续输入列表</option><option value="action">直接执行</option></select></label>
+              <label data-option="executionMode">执行方式<select id="executionMode" data-field="executionMode"><option value="foreground">前台执行</option><option value="background">后台执行</option></select></label>
+              <label data-option="inputEnabled" class="checkbox"><input id="inputEnabled" data-field="inputEnabled" type="checkbox">启用顶部输入</label>
+              <label data-option="placeholder">输入占位文本<input id="inputPlaceholder" data-field="placeholder" placeholder="输入参数…"></label>
+            </div>
+            <details class="advanced"><summary>搜索与匹配</summary>
+              <label>关键词（每行一个）<textarea id="keywords" data-field="keywords" rows="2"></textarea></label>
+              <p class="hint">匹配规则满足任意一条即可；正则以宿主 NSRegularExpression 为准。</p>
+              <div data-matches></div><button type="button" data-add-match>添加匹配规则</button>
+            </details>
+            <button type="button" data-remove-command>删除命令</button>
+          </section>
+        </div>
+        <button id="addCommand" type="button">添加命令</button>
+        <details class="advanced">
+          <summary>高级设置</summary>
+          <p class="hint">插件 ID 可留空，使用目录派生的默认值；当前模板最低要求 Leap 1.1.0。</p>
+          <div class="grid">
+            <label>插件 ID<input id="pluginID" name="id" placeholder="选择目录后自动确定"></label>
+            <label>最低宿主版本<input id="minimumHostVersion" name="minimumHostVersion" value="1.1.0" required></label>
+            <label class="checkbox"><input id="includeIcon" type="checkbox">包含默认图标（生成后可替换）</label>
+          </div>
+        </details>
+      </fieldset>
+      <footer><span>生成后自动用 Finder 打开</span><button id="generate" class="primary" type="submit">生成插件模板</button></footer>
+    </form>
+    <section id="feedback" role="status" aria-live="polite" hidden>
+      <p id="status"></p><code id="generatedPath"></code>
+      <button id="open" type="button" hidden>打开目录</button>
+    </section>
+  </main>
+  <template id="matchTemplate">
+    <div class="match-row">
+      <label>匹配类型<select data-match="type"><option value="text">任意文本</option><option value="regex">正则表达式</option></select></label>
+      <label data-pattern-option hidden>正则表达式<input data-match="pattern" disabled></label>
+      <label>最小长度<input data-match="minLength" type="number" min="1" max="10000" value="1"></label>
+      <label>最大长度<input data-match="maxLength" type="number" min="1" max="10000" value="1000"></label>
+      <button type="button" data-remove-match>删除规则</button>
+    </div>
+  </template>
+</body>
+</html>

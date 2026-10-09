@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import LeapCore
 import YQLogger
 import SwiftUI
 
@@ -11,13 +12,19 @@ final class LauncherPanelController {
     private static let initialContentHeight: CGFloat = 118
     private static let verticalPositionFromTop: CGFloat = 1 / 3
 
+    var settingsRequested: ((NSScreen?) -> Void)?
+
     private let clock = ContinuousClock()
     private let model: LauncherModel
     private var panel: LauncherPanel?
+    private let pluginWindowController = PluginWebWindowController()
 
     init(model: LauncherModel) {
         self.model = model
         model.applicationDidLaunch = { [weak self] in self?.hideAfterApplicationLaunch() }
+        model.webPluginRequested = { [weak self] command in
+            self?.presentWebPlugin(command)
+        }
     }
 
     var isVisible: Bool {
@@ -56,7 +63,36 @@ final class LauncherPanelController {
 
     private func hideAfterApplicationLaunch() {
         // 仅收起启动器；隐藏整个应用会在下次激活时恢复旧 Space 中的设置窗口。
+        model.exitInteraction()
         panel?.orderOut(nil)
+    }
+
+    private func presentWebPlugin(_ command: PluginCommandDescriptor) {
+        let screen = panel?.screen
+        panel?.orderOut(nil)
+        pluginWindowController.present(
+            command: command,
+            on: screen,
+            invoke: { [weak model] commandID, query in
+                guard let model else { return .failure("插件宿主已关闭。") }
+                return await model.invokeFromWeb(command: command, commandID: commandID, query: query)
+            },
+            onClose: { [weak self] in
+                guard let self else { return }
+                model.dismissWebPlugin()
+                let keyboardClose = NSApp.currentEvent.map { $0.type == .keyDown || $0.type == .keyUp } ?? false
+                // 按键关闭主窗口时 AppKit 会异步归还焦点；让这次交接结束后再恢复非激活面板。
+                Task { @MainActor [weak self] in
+                    if keyboardClose {
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                    guard let self, model.webCommand == nil else { return }
+                    panel?.makeKeyAndOrderFront(nil)
+                    model.requestSearchFocus()
+                    Self.logger.debug("插件关闭后已恢复启动器，键盘焦点：\(panel?.isKeyWindow ?? false)。")
+                }
+            }
+        )
     }
 
     private func createPanel() -> LauncherPanel {
@@ -76,17 +112,27 @@ final class LauncherPanelController {
         panel.level = .floating
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = false
+        // 收起由 resignKey 统一管理；关闭最后一个普通插件窗口时，应用失活不应自动隐藏刚恢复的面板。
+        panel.hidesOnDeactivate = false
         // 启动器应跟随当前 Mission Control 桌面，而非永久附着在首次创建时的空间。
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.identifier = NSUserInterfaceItemIdentifier("com.padding.leap.launcher")
+        panel.exitInteraction = { [weak model] in
+            guard let model, model.interaction != nil else { return false }
+            model.exitInteraction()
+            return true
+        }
         panel.contentView = LauncherHostingView(
-            rootView: LauncherView(model: model) { [weak panel] height in
+            rootView: LauncherView(model: model) { [weak panel, weak model] height in
                 guard let panel else {
                     return
                 }
-                Self.resize(panel, toContentHeight: height)
-            } hideForSettings: { [weak panel] in
+                Self.resize(panel, toContentHeight: height, keepWithinScreen: model?.interaction != nil)
+            } hideForSettings: { [weak self, weak panel] in
+                let screen = panel?.screen
+                // 先隐藏启动器，再激活设置，避免启动器退出时打断设置的焦点交接。
                 panel?.orderOut(nil)
+                self?.settingsRequested?(screen)
             }
         )
         return panel
@@ -132,7 +178,7 @@ final class LauncherPanelController {
         )
     }
 
-    private static func resize(_ panel: NSWindow, toContentHeight height: CGFloat) {
+    private static func resize(_ panel: NSWindow, toContentHeight height: CGFloat, keepWithinScreen: Bool) {
         guard height.isFinite, height > 0 else {
             logger.error("忽略无效的启动器内容高度：\(height)。")
             return
@@ -148,6 +194,10 @@ final class LauncherPanelController {
         // AppKit 坐标原点位于左下角，因此固定 maxY 即可让窗口只向下伸展。
         targetFrame.origin.y = panel.frame.maxY - targetSize.height
         targetFrame.size = targetSize
+        if keepWithinScreen, let visibleFrame = panel.screen?.visibleFrame {
+            // 长页面可向上让位，避免固定搜索栏顶边后把底部按钮推到屏幕外。
+            targetFrame.origin.y = max(visibleFrame.minY + 12, targetFrame.origin.y)
+        }
         panel.setFrame(targetFrame, display: true, animate: false)
     }
 }
@@ -159,18 +209,46 @@ private final class LauncherHostingView: NSHostingView<LauncherView> {
 }
 
 private final class LauncherPanel: NSPanel {
+    private static let logger = YQLogger(label: "com.padding.leap/launcher-panel")
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    var exitInteraction: (() -> Bool)?
+    private var consumesEscape = false
+
+    override func sendEvent(_ event: NSEvent) {
+        let isEscape = (event.type == .keyDown || event.type == .keyUp) && event.keyCode == 53
+        let isComposing = (firstResponder as? any NSTextInputClient)?.hasMarkedText() == true
+        if attachedSheet == nil, isEscape, !isComposing {
+            if event.type == .keyDown {
+                consumesEscape = true
+                return
+            }
+            if consumesEscape {
+                consumesEscape = false
+                if exitInteraction?() != true { orderOut(nil) }
+                return
+            }
+        }
+        super.sendEvent(event)
+    }
 
     override func cancelOperation(_ sender: Any?) {
+        if exitInteraction?() == true { return }
+        Self.logger.debug("启动器收到取消操作，已收起。")
         // Escape 只隐藏常驻面板，避免结束应用或破坏下一次快捷键唤起。
         orderOut(sender)
     }
 
     override func resignKey() {
         super.resignKey()
-        // 非激活面板不会触发应用的失活回调，改由失去键盘焦点时收起。
-        if isVisible {
+        consumesEscape = false
+        // 原生目录sheet归还焦点前，父面板和插件会话必须保留。
+        guard attachedSheet == nil else { return }
+        // 更换输入框时 AppKit 会短暂交还焦点；本轮交接结束后再判断是否真的离开面板。
+        Task { @MainActor [weak self] in
+            guard let self, !isKeyWindow, attachedSheet == nil, isVisible else { return }
+            _ = exitInteraction?()
+            Self.logger.debug("启动器失去键盘焦点，已收起。")
             orderOut(nil)
         }
     }

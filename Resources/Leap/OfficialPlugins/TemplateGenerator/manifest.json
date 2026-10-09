@@ -1,0 +1,29 @@
+{
+  "id": "com.padding.leap.template-generator",
+  "name": "插件模板生成器",
+  "version": "1.1.0",
+  "runtime": "javascript",
+  "entry": "main.js",
+  "webEntry": "index.html",
+  "commands": [
+    {
+      "id": "template.generate",
+      "title": "创建插件模板",
+      "executionMode": "foreground",
+      "mode": "interactive",
+      "presentation": "web",
+      "input": {
+        "enabled": false
+      },
+      "keywords": [
+        "创建插件",
+        "插件模板"
+      ]
+    }
+  ],
+  "webWindow": {
+    "width": 760,
+    "height": 720
+  },
+  "minimumHostVersion": "1.1.0"
+}

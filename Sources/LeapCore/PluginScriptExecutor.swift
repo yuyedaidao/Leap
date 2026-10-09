@@ -50,7 +50,10 @@ public struct PluginScriptExecutor: Sendable {
         manifest: PluginManifest,
         pluginDirectory: URL,
         commandID: String,
-        query: String
+        query: String,
+        method: String = "leap.invoke",
+        itemID: String? = nil,
+        cancellation: PluginInvocationCancellation? = nil
     ) throws -> String {
         let entryURL = pluginDirectory.appendingPathComponent(manifest.entry).standardizedFileURL
         guard entryURL.path.hasPrefix(pluginDirectory.standardizedFileURL.path + "/") else {
@@ -61,7 +64,10 @@ public struct PluginScriptExecutor: Sendable {
             executable: runtime,
             arguments: [entryURL.path],
             commandID: commandID,
-            query: query
+            query: query,
+            method: method,
+            itemID: itemID,
+            cancellation: cancellation
         )
     }
 }

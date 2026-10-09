@@ -28,10 +28,13 @@ let project = Project(
             deploymentTargets: .macOS("26.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "Leap",
+                "CFBundleShortVersionString": "1.1.0",
+                "CFBundleVersion": "2",
             ]),
             sources: ["Sources/Leap/**"],
             resources: [
                 .folderReference(path: "Resources/Leap/Runtimes"),
+                .folderReference(path: "Resources/Leap/OfficialPlugins"),
                 .glob(pattern: "Resources/Leap/Assets.xcassets"),
             ],
             dependencies: [

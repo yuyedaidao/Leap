@@ -85,6 +85,7 @@ final class LauncherModel {
     private let applicationLauncher: (URL) async throws -> Void
     private var applicationWatcher: SystemApplicationWatcher?
     private var foregroundShellTask: ShellScriptTask?
+    private var contentMatchers: [String: PluginCommandMatcher] = [:]
 
     var query = ""
     private(set) var commands: [PluginCommandDescriptor] = []
@@ -92,8 +93,10 @@ final class LauncherModel {
     private(set) var recentItems: [LauncherItem] = []
     private(set) var invocationState = InvocationState.idle
     private(set) var webCommand: PluginCommandDescriptor?
+    private(set) var interaction: PluginInteractionSession?
     private(set) var focusRequestID = 0
     var applicationDidLaunch: (() -> Void)?
+    var webPluginRequested: ((PluginCommandDescriptor) -> Void)?
 
     init(paths: AppPaths) {
         catalog = InstalledPluginCatalog(paths: paths)
@@ -153,6 +156,10 @@ final class LauncherModel {
 
     func reloadPlugins() {
         commands = fixtureCommands ?? catalog?.load() ?? []
+        contentMatchers = Dictionary(uniqueKeysWithValues: commands.map { command in
+            (command.id, PluginCommandMatcher(command: configuration(for: command)))
+        })
+        if let interaction, !commands.contains(where: { $0 == interaction.command }) { exitInteraction() }
         if let fixtureApplications { applications = fixtureApplications }
         rebuildRecentItems()
     }
@@ -204,9 +211,9 @@ final class LauncherModel {
     }
 
     func prepareForPresentation() {
+        exitInteraction()
         query = ""
         invocationState = .idle
-        webCommand = nil
     }
 
     func activateFirstSearchResult() {
@@ -226,12 +233,28 @@ final class LauncherModel {
     }
 
     func activate(_ command: PluginCommandDescriptor) {
+        let configuration = configuration(for: command)
+        if configuration.mode == .interactive {
+            exitInteraction()
+            let initialInput = keywordMatchRank(command, query: query) == nil &&
+                contentMatchers[command.id]?.matchesContent(query) == true ? query : ""
+            interaction = PluginInteractionSession(
+                command: command, configuration: configuration,
+                previousSearch: query, initialInput: initialInput, executor: scriptExecutor
+            )
+            invocationState = .idle
+            recordRecent(command)
+            if configuration.inputEnabled { requestSearchFocus() }
+            Self.logger.debug("已进入交互插件：\(command.id)。")
+            return
+        }
         if command.manifest.runtime == .shell {
             activateShell(command)
             return
         }
-        guard command.manifest.webEntry == nil else {
+        guard configuration.mode == .action || command.manifest.webEntry == nil else {
             webCommand = command
+            webPluginRequested?(command)
             return
         }
 
@@ -267,6 +290,21 @@ final class LauncherModel {
 
     func dismissWebPlugin() {
         webCommand = nil
+    }
+
+    func exitInteraction() {
+        guard let interaction else { return }
+        interaction.close()
+        query = interaction.previousSearch
+        self.interaction = nil
+        invocationState = .idle
+        requestSearchFocus()
+        Self.logger.debug("已退出交互插件：\(interaction.command.id)。")
+    }
+
+    private func configuration(for command: PluginCommandDescriptor) -> PluginManifest.Command {
+        command.manifest.commands.first(where: { $0.id == command.commandID }) ??
+            .init(id: command.commandID, title: command.title)
     }
 
     private func run(_ command: PluginCommandDescriptor, query: String) async -> InvocationResponse {
@@ -346,13 +384,20 @@ final class LauncherModel {
     }
 
     private func pluginMatchRank(_ command: PluginCommandDescriptor, query: String) -> Int? {
+        keywordMatchRank(command, query: query) ??
+            (contentMatchers[command.id]?.matchesContent(self.query) == true ? 5 : nil)
+    }
+
+    private func keywordMatchRank(_ command: PluginCommandDescriptor, query: String) -> Int? {
         let query = SystemApplicationDescriptor.normalize(query)
+        guard !query.isEmpty else { return nil }
         let title = SystemApplicationDescriptor.normalize(command.title)
         let pluginName = SystemApplicationDescriptor.normalize(command.pluginName)
         let commandID = SystemApplicationDescriptor.normalize(command.commandID)
-        if title == query { return 0 }
-        if title.hasPrefix(query) { return 1 }
-        if title.contains(query) { return 2 }
+        let names = [title] + (configuration(for: command).keywords ?? []).map(SystemApplicationDescriptor.normalize)
+        if names.contains(query) { return 0 }
+        if names.contains(where: { $0.hasPrefix(query) }) { return 1 }
+        if names.contains(where: { $0.contains(query) }) { return 2 }
         if pluginName.hasPrefix(query) || commandID.hasPrefix(query) { return 3 }
         if pluginName.contains(query) || commandID.contains(query) { return 4 }
         return nil

@@ -16,11 +16,13 @@ public struct PluginInstallCandidate: Equatable, Sendable {
 
 public struct PluginInstaller {
     public enum InstallationError: LocalizedError {
+        case officialPluginReserved
         case confirmationRequired
         case managedDirectoryEscape
 
         public var errorDescription: String? {
             switch self {
+            case .officialPluginReserved: "官方内置插件随 Leap 更新，不能本地覆盖或卸载。"
             case .confirmationRequired: "插件内容尚未获得确认。"
             case .managedDirectoryEscape: "受管插件目录不安全。"
             }
@@ -38,6 +40,7 @@ public struct PluginInstaller {
 
     public func inspect(sourceDirectory: URL, fileManager: FileManager = .default) throws -> PluginInstallCandidate {
         let manifest = try manifestValidator.load(from: sourceDirectory, fileManager: fileManager)
+        guard !AppPaths.isOfficialPluginID(manifest.id) else { throw InstallationError.officialPluginReserved }
         return PluginInstallCandidate(
             sourceDirectory: sourceDirectory.standardizedFileURL,
             manifest: manifest,
@@ -61,6 +64,9 @@ public struct PluginInstaller {
         confirmed: Bool,
         fileManager: FileManager = .default
     ) throws -> URL {
+        guard !AppPaths.isOfficialPluginID(candidate.manifest.id) else {
+            throw InstallationError.officialPluginReserved
+        }
         guard confirmed || !requiresConfirmation(for: candidate, fileManager: fileManager) else {
             throw InstallationError.confirmationRequired
         }
@@ -94,6 +100,7 @@ public struct PluginInstaller {
 
     /// 只删除 Leap 自己创建的受管副本和对应信任记录，不接触用户选择的源目录。
     public func uninstall(pluginID: String, fileManager: FileManager = .default) throws {
+        guard !AppPaths.isOfficialPluginID(pluginID) else { throw InstallationError.officialPluginReserved }
         let destination = try paths.managedPluginDirectory(for: pluginID)
         guard destination.deletingLastPathComponent().standardizedFileURL == paths.pluginsDirectory.standardizedFileURL else {
             throw InstallationError.managedDirectoryEscape

@@ -47,6 +47,17 @@ public struct AppPaths: Sendable {
         applicationSupportDirectory.appendingPathComponent("Plugins", isDirectory: true)
     }
 
+    /// 官方插件直接读取随包资源，不创建可被本地安装覆盖的受管副本。
+    public static let templateGeneratorID = "com.padding.leap.template-generator"
+
+    public var officialPluginsDirectory: URL {
+        resourceDirectory.appendingPathComponent("OfficialPlugins", isDirectory: true)
+    }
+
+    public static func isOfficialPluginID(_ id: String) -> Bool {
+        id == templateGeneratorID
+    }
+
     public var trustRecordsDirectory: URL {
         applicationSupportDirectory.appendingPathComponent("Trust", isDirectory: true)
     }

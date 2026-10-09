@@ -5,6 +5,7 @@ import YQLogger
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logger = YQLogger(label: "com.padding.leap/app")
+    let settingsWindowPresenter = SettingsWindowPresenter()
     private var launcherPanelController: LauncherPanelController?
     private var globalHotKey: GlobalHotKey?
     private(set) var settingsCoordinator: SettingsCoordinator?
@@ -19,9 +20,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.startApplicationIndexing()
             let launcherPanelController = LauncherPanelController(model: model)
             self.launcherPanelController = launcherPanelController
+            launcherPanelController.settingsRequested = { [weak self] screen in
+                self?.settingsWindowPresenter.prepare(on: screen)
+            }
 
             Task { @MainActor in
+#if DEBUG
+                // 隔离 UI 测试固定主屏，避免 XCTest 在副屏的坐标转换及取词浮层干扰。
+                let testingDisplay = ProcessInfo.processInfo.arguments.contains("-leap-testing-support-directory")
+                    ? CGMainDisplayID() : nil
+                launcherPanelController.present(on: testingDisplay)
+#else
                 launcherPanelController.present()
+#endif
+                presentTestingWebPlugin(in: model)
 
                 if ProcessInfo.processInfo.arguments.contains("-measure-hot-wakes") {
                     let meetsBudget = launcherPanelController.meetsHotWakeBudget()
@@ -81,6 +93,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 #endif
         return try AppPaths()
+    }
+
+    private func presentTestingWebPlugin(in model: LauncherModel) {
+#if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        // 仅在隔离数据目录下启用 UI 测试启动夹具，仍走实际安装索引与正常打开路径。
+        guard arguments.contains("-leap-testing-support-directory"),
+              let index = arguments.firstIndex(of: "-leap-testing-open-plugin"),
+              arguments.indices.contains(index + 1) else { return }
+        model.reloadPlugins()
+        if let command = model.commands.first(where: {
+            $0.manifest.id == arguments[index + 1]
+        }) {
+            model.activate(command)
+        }
+#endif
     }
 
     private func makeGlobalHotKey() -> GlobalHotKey {

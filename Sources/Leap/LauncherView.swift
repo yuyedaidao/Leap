@@ -31,21 +31,34 @@ struct LauncherView: View {
                 hideForSettings: hideForSettings,
                 submit: activateSelectedItem,
                 moveSearchSelection: moveSearchSelection,
-                moveRecentSelection: moveRecentSelection
+                moveRecentSelection: moveRecentSelection,
+                interaction: model.interaction,
+                focusRequestID: model.focusRequestID,
+                exitInteraction: model.exitInteraction
             )
-            LauncherContent(
-                query: model.query,
-                searchResults: model.searchResults,
-                recentItems: model.recentItems,
-                selectedSearchResultID: selectedSearchResultID,
-                selectedRecentItemID: selectedRecentItemID,
-                activate: model.activate
-            )
-            if model.invocationState != .idle {
-                LauncherInvocationFeedback(
-                    state: model.invocationState,
-                    stopForegroundShell: model.stopForegroundShell
+            if let interaction = model.interaction {
+                PluginInteractionView(
+                    session: interaction,
+                    invoke: { commandID, query in
+                        await model.invokeFromWeb(command: interaction.command, commandID: commandID, query: query)
+                    }
                 )
+                .id(interaction.id)
+            } else {
+                LauncherContent(
+                    query: model.query,
+                    searchResults: model.searchResults,
+                    recentItems: model.recentItems,
+                    selectedSearchResultID: selectedSearchResultID,
+                    selectedRecentItemID: selectedRecentItemID,
+                    activate: model.activate
+                )
+                if model.invocationState != .idle {
+                    LauncherInvocationFeedback(
+                        state: model.invocationState,
+                        stopForegroundShell: model.stopForegroundShell
+                    )
+                }
             }
         }
         .padding(24)
@@ -73,23 +86,7 @@ struct LauncherView: View {
             selectedRecentItemID = model.recentItems.first?.id
         }
         .onChange(of: model.focusRequestID, initial: true) {
-            isSearchFieldFocused = true
-        }
-        .sheet(
-            isPresented: Binding(
-                get: { model.webCommand != nil },
-                set: { if !$0 { model.dismissWebPlugin() } }
-            )
-        ) {
-            if let command = model.webCommand {
-                PluginWebSheet(
-                    command: command,
-                    invoke: { commandID, query in
-                        await model.invokeFromWeb(command: command, commandID: commandID, query: query)
-                    },
-                    dismiss: model.dismissWebPlugin
-                )
-            }
+            if model.interaction == nil { isSearchFieldFocused = true }
         }
     }
 
@@ -131,6 +128,10 @@ struct LauncherView: View {
     }
 
     private func activateSelectedItem() {
+        if let interaction = model.interaction {
+            interaction.submit()
+            return
+        }
         let items = hasSearchResults ? model.searchResults : model.recentItems
         let selectedID = hasSearchResults ? selectedSearchResultID : selectedRecentItemID
         guard let item = items.first(where: { $0.id == selectedID }) ?? items.first else { return }
@@ -146,55 +147,94 @@ private struct LauncherSearchHeader: View {
     let submit: () -> Void
     let moveSearchSelection: (Int) -> Bool
     let moveRecentSelection: (Int) -> Bool
+    var interaction: PluginInteractionSession?
+    var focusRequestID = 0
+    var exitInteraction: () -> Void = {}
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            TextField("搜索功能 / 粘贴文件、图片", text: $query)
-                .accessibilityIdentifier("launcher.searchField")
-                .textFieldStyle(.plain)
-                .font(.title)
-                .focused(isFocused)
-                .onSubmit(submit)
-                .onKeyPress(.upArrow) {
-                    moveSearchSelection(-1) ? .handled : .ignored
-                }
-                .onKeyPress(.downArrow) {
-                    moveSearchSelection(1) ? .handled : .ignored
-                }
-                .onKeyPress(.leftArrow) {
-                    moveRecentSelection(-1) ? .handled : .ignored
-                }
-                .onKeyPress(.rightArrow) {
-                    moveRecentSelection(1) ? .handled : .ignored
+        GeometryReader { geometry in
+            HStack(alignment: .center, spacing: 12) {
+                if let interaction {
+                    @Bindable var interaction = interaction
+                    PluginInteractionTag(session: interaction, exit: exitInteraction)
+                        // 扣除边距、设置按钮和间距后，限制标签宽度以保留参数输入空间。
+                        .frame(maxWidth: max(0, geometry.size.width - 80) * 0.45, alignment: .leading)
+                        .fixedSize(horizontal: true, vertical: false)
+                    if interaction.configuration.inputEnabled {
+                        PluginParameterInput(
+                            text: $interaction.inputText,
+                            placeholder: interaction.configuration.input?.placeholder ?? "输入插件参数…",
+                            focusRequestID: focusRequestID,
+                            commit: interaction.commitInput, submit: interaction.submit,
+                            move: { interaction.list?.moveSelection($0) }
+                        )
+                        .id(interaction.id)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 28)
+                    } else {
+                        Spacer()
+                    }
+                } else {
+                    TextField("搜索功能 / 粘贴文件、图片", text: $query)
+                        .accessibilityIdentifier("launcher.searchField")
+                        .textFieldStyle(.plain)
+                        .autocorrectionDisabled()
+                        .font(.title)
+                        .focused(isFocused)
+                        .onSubmit(submit)
+                        .onKeyPress(.upArrow) {
+                            moveSearchSelection(-1) ? .handled : .ignored
+                        }
+                        .onKeyPress(.downArrow) {
+                            moveSearchSelection(1) ? .handled : .ignored
+                        }
+                        .onKeyPress(.leftArrow) {
+                            moveRecentSelection(-1) ? .handled : .ignored
+                        }
+                        .onKeyPress(.rightArrow) {
+                            moveRecentSelection(1) ? .handled : .ignored
+                        }
+
                 }
 
-            Button {
-                hideForSettings()
-                openSettings()
-            } label: {
-                let r: CGFloat = 20
-                let bWidth = r * 2
-                let iWidth = ceil(sqrt(r * r * 2)) * 2
-                ZStack {
-                    Circle()
-                        .fill(.quaternary)
-                    Image("LauncherSettingsIcon")
-                        .resizable()
-                        .scaledToFill()
-                        // 放大系统图标以裁掉 macOS 默认的圆角留白。
-                        .frame(width: iWidth, height: iWidth)
+                Button {
+                    exitInteraction()
+                    hideForSettings()
+                    openSettings()
+                } label: {
+                    let radius: CGFloat = 20
+                    let bWidth = radius * 2
+                    let iWidth = ceil(sqrt(radius * radius * 2)) * 2
+                    ZStack {
+                        Circle()
+                            .fill(.quaternary)
+                        Image("LauncherSettingsIcon")
+                            .resizable()
+                            .scaledToFill()
+                            // 放大系统图标以裁掉 macOS 默认的圆角留白。
+                            .frame(width: iWidth, height: iWidth)
+                    }
+                    .frame(width: bWidth, height: bWidth)
+                    .clipShape(Circle())
+                    .contentShape(Circle())
                 }
-                .frame(width: bWidth, height: bWidth)
-                .clipShape(Circle())
-                .contentShape(Circle())
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("launcher.settingsButton")
+                .accessibilityLabel("设置")
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("launcher.settingsButton")
-            .accessibilityLabel("设置")
+            .padding(.horizontal, 14)
+            .frame(height: 70)
         }
-        .padding(.horizontal, 14)
         .frame(height: 70)
         .background(.tertiary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .task(id: interaction?.id) {
+            guard interaction == nil else { return }
+            // 等搜索框重新挂载后再交接焦点，避免关闭按钮保留键盘输入。
+            isFocused.wrappedValue = false
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            isFocused.wrappedValue = true
+        }
     }
 }
 
@@ -215,9 +255,9 @@ private struct LauncherSearchHeaderPreview: View {
             moveSearchSelection: { _ in false },
             moveRecentSelection: { _ in false }
         )
-            .onAppear {
-                isFocused = true
-            }
+        .onAppear {
+            isFocused = true
+        }
     }
 }
 
@@ -231,7 +271,8 @@ private struct LauncherContent: View {
 
     var body: some View {
         if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           !searchResults.isEmpty {
+           !searchResults.isEmpty
+        {
             LauncherSearchResults(items: searchResults, selectedItemID: selectedSearchResultID, activate: activate)
         } else if !recentItems.isEmpty {
             RecentCommandsSection(items: recentItems, selectedItemID: selectedRecentItemID, activate: activate)
@@ -394,7 +435,7 @@ private struct LauncherItemIcon: View {
     }
 }
 
-private struct CommandIcon: View {
+struct CommandIcon: View {
     let iconURL: URL?
     let runtime: PluginManifest.Runtime
 
@@ -409,7 +450,7 @@ private struct CommandIcon: View {
                 .font(.title3)
                 .foregroundStyle(.tint)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
     }
 

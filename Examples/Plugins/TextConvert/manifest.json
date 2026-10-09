@@ -1,0 +1,30 @@
+{
+  "id": "com.padding.leap.text-convert",
+  "name": "文本转换",
+  "version": "1.0.0",
+  "minimumHostVersion": "1.1.0",
+  "runtime": "javascript",
+  "entry": "main.js",
+  "commands": [
+    {
+      "id": "text.convert",
+      "title": "文本转换",
+      "mode": "interactive",
+      "presentation": "list",
+      "input": {
+        "enabled": true,
+        "placeholder": "输入文本进行大小写转换…"
+      },
+      "keywords": [
+        "转换",
+        "convert"
+      ],
+      "matches": [
+        {
+          "type": "text",
+          "maxLength": 1000
+        }
+      ]
+    }
+  ]
+}

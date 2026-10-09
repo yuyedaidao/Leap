@@ -108,7 +108,7 @@ private struct PluginSettingsHeader: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("本地插件")
                     .font(.title2.bold())
-                Text("Leap 只运行与信任记录匹配的受管副本。")
+                Text("官方插件随 Leap 提供；本地插件需安装确认后使用。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -164,9 +164,16 @@ private struct PluginRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("更新", action: requestUpdate)
-            Button("卸载", role: .destructive) {
-                requestUninstall(plugin)
+            if plugin.origin == .official {
+                Text("官方内置")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("随 Leap 更新，无需单独安装。")
+            } else {
+                Button("更新", action: requestUpdate)
+                Button("卸载", role: .destructive) {
+                    requestUninstall(plugin)
+                }
             }
         }
     }

@@ -1,0 +1,14 @@
+{
+  "id": "com.padding.leap.hello",
+  "name": "Hello",
+  "version": "1.0.0",
+  "runtime": "shell",
+  "entry": "main.zsh",
+  "commands": [
+    {
+      "id": "hello.print",
+      "title": "输出 hello",
+      "executionMode": "foreground"
+    }
+  ]
+}
