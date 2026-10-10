@@ -38,9 +38,16 @@ struct PluginInteractionTag: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            CommandIcon(iconURL: session.command.iconURL, runtime: session.command.manifest.runtime)
-                .frame(width: 28, height: 28)
-                .accessibilityHidden(true)
+            // 图标装饰与可访问的加载状态分开，避免隐藏图标时同时隐藏状态说明。
+            ZStack {
+                CommandIcon(iconURL: session.command.iconURL, runtime: session.command.manifest.runtime)
+                    .frame(width: 28, height: 28)
+                    .accessibilityHidden(true)
+                if session.list?.isLoadingVisible == true {
+                    PluginLoadingRing(isSelecting: session.list?.isSelecting == true)
+                }
+            }
+            .frame(width: 28, height: 28)
             HStack(spacing: 6) {
                 Text(session.command.pluginName)
                     .accessibilityIdentifier("plugin.activeName")
@@ -79,59 +86,24 @@ private struct PluginResultList: View {
                 Text(title).font(.headline).lineLimit(1).help(title)
                     .accessibilityIdentifier("plugin.listTitle")
             }
-            if session.isLoading {
-                PluginListProgress(text: "正在查询…", identifier: "plugin.queryProgress")
-            } else if session.items.isEmpty, session.message == nil {
+            if !session.isLoading, session.items.isEmpty, session.message == nil {
                 Text("没有结果，请输入或修改参数。")
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("plugin.emptyResults")
             }
-            if !session.items.isEmpty {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 4) {
-                            ForEach(session.items.enumerated(), id: \.element.id) { index, item in
-                                Button { session.select(item.id) } label: {
-                                    HStack(spacing: 12) {
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(item.title).lineLimit(2)
-                                            if let description = item.description,
-                                               !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                                Text(description).font(.caption)
-                                                    .foregroundStyle(.secondary).lineLimit(2)
-                                                    .accessibilityIdentifier("plugin.subtitle.\(item.id)")
-                                            }
-                                        }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        if let shortcut = LauncherListShortcut.hint(at: index) {
-                                            Text(shortcut).font(.caption).foregroundStyle(.secondary)
-                                                .accessibilityIdentifier("plugin.shortcut.\(item.id)")
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                                    .padding(8)
-                                    .background(
-                                        item.id == session.selectedID
-                                            ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1),
-                                        in: RoundedRectangle(cornerRadius: 9)
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(session.isSelecting || session.isLoading)
-                                .id(item.id)
-                                .accessibilityIdentifier("plugin.result.\(item.id)")
-                            }
-                        }
-                    }
-                    .frame(height: min(CGFloat(session.items.count) * 70, 420))
-                    .onChange(of: session.selectedID) { _, id in
-                        if let id { proxy.scrollTo(id) }
-                    }
+            NativeResultList(items: session.items, selectedID: session.selectedID) { item, index in
+                NativeResultRow(title: item.title, subtitle: item.description,
+                                isSelected: item.id == session.selectedID,
+                                shortcut: LauncherListShortcut.hint(at: index),
+                                identifierPrefix: "plugin", itemID: item.id,
+                                activate: { session.select(item.id) }) {
+                    EmptyView()
                 }
+                .accessibilityIdentifier("plugin.result.\(item.id)")
+                .disabled(session.isSelecting || session.isLoading)
             }
-            if session.isSelecting {
-                PluginListProgress(text: "正在执行…", identifier: "plugin.selectionProgress")
-            }
+            .accessibilityIdentifier("plugin.results")
+
             if let message = session.message, !message.isEmpty {
                 Text(message)
                     .foregroundStyle(session.isError ? .red : .primary)
@@ -143,20 +115,22 @@ private struct PluginResultList: View {
     }
 }
 
-private struct PluginListProgress: View {
-    let text: String
-    let identifier: String
+private struct PluginLoadingRing: View {
+    let isSelecting: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var rotating = false
 
     var body: some View {
-        // 分开绘制控件与文字，确保旋转控件自身居中，不受标签宽度影响。
-        VStack(spacing: 6) {
-            ProgressView().controlSize(.small)
-                .accessibilityIdentifier(identifier + ".spinner")
-            Text(text).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.vertical, 8)
-        .accessibilityIdentifier(identifier)
+        Circle().trim(from: 0, to: 0.75)
+            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+            .frame(width: 32, height: 32)
+            .rotationEffect(.degrees(rotating && !reduceMotion ? 360 : 0))
+            .animation(reduceMotion ? nil : .linear(duration: 1).repeatForever(autoreverses: false), value: rotating)
+            .onAppear { rotating = true }
+            .allowsHitTesting(false)
+            .accessibilityElement()
+            .accessibilityLabel(isSelecting ? "正在执行" : "正在查询")
+            .accessibilityIdentifier("plugin.loadingIndicator")
     }
 }
 

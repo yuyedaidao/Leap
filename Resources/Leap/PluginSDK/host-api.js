@@ -31,6 +31,8 @@
       } catch (error) { return Promise.reject(error); }
     };
     return {
+      showLoading: () => invoke('showLoading', {}),
+      hideLoading: () => invoke('hideLoading', {}),
       copyText: value => single('copyText', 'text', value),
       copyFile: value => single('copyFile', 'filePath', value),
       copyImage: value => single('copyImage', 'image', value),

@@ -65,6 +65,9 @@ interface LeapCommonSDK {
 
   outPlugin(): Promise<boolean>;
   hideMainWindow(): Promise<boolean>;
+  /** 仅支持当前原生列表回调，结束或取消时宿主自动清理。 */
+  showLoading(): Promise<boolean>;
+  hideLoading(): Promise<boolean>;
   log(...values: unknown[]): void;
 }
 interface LeapNodeSDK extends LeapCommonSDK {

@@ -5,28 +5,42 @@ import XCTest
 
 final class PluginInteractionUITests: XCTestCase {
     @MainActor
-    func testNumericShortcutsTitleSubtitlesAndCenteredProgress() throws {
+    func testNumericShortcutsTitleSubtitlesAndExplicitLoading() throws {
         let script = """
         leap.onInputChange(async ({setList}) => {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await leap.showLoading();
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          await leap.hideLoading();
           setList(Array.from({length:11}, (_,i) => ({id:String(i),title:'结果 '+i,
             description:i === 0 ? '   ' : ('这是条目子标题 '+i+' ').repeat(20)})),
             {title:'共11个结果 '+ '很长的顶部标题'.repeat(40)});
         });
         leap.onSelect(async ({item}) => {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await leap.showLoading();
+          await new Promise(resolve => setTimeout(resolve, 2000));
           return '已选择 '+item.id;
         });
         """
         let app = try launch(source: "NumberEnumeration", openPlugin: true, script: script)
         let parameter = app.textFields["plugin.parameterInput"]
         XCTAssertTrue(parameter.waitForExistence(timeout: 5))
-        assertCenteredSpinner(app, identifier: "plugin.queryProgress.spinner")
         let first = app.buttons["plugin.result.0"]
         XCTAssertTrue(first.waitForExistence(timeout: 5))
+        // 启动和辅助功能快照可能超过首次查询时间，主动触发查询再检查加载布局。
+        let listFrame = app.descendants(matching: .any)["plugin.results"].firstMatch.frame
+        let panelFrame = app.dialogs["com.padding.leap.launcher"].frame
+        parameter.typeText("1")
+        assertLoadingRing(app)
+        XCTAssertEqual(app.descendants(matching: .any)["plugin.results"].firstMatch.frame, listFrame)
+        XCTAssertEqual(app.dialogs["com.padding.leap.launcher"].frame, panelFrame)
+        let queryFinished = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: first
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [queryFinished], timeout: 5), .completed)
+        XCTAssertFalse(app.descendants(matching: .any)["plugin.loadingIndicator"].exists)
         let title = app.staticTexts["plugin.listTitle"]
         XCTAssertTrue(title.exists)
-        XCTAssertLessThan(title.frame.width, app.windows.firstMatch.frame.width)
+        XCTAssertLessThan(title.frame.width, app.dialogs["com.padding.leap.launcher"].frame.width)
         XCTAssertLessThan(title.frame.height, 30)
         XCTAssertTrue(first.label.contains("⌘1"))
         XCTAssertFalse(first.label.contains("条目子标题"))
@@ -34,14 +48,79 @@ final class PluginInteractionUITests: XCTestCase {
         XCTAssertLessThan(app.buttons["plugin.result.1"].frame.height, 85)
         // 第十项在滚动区域之外，验证快捷键由窗口处理而非行是否已挂载。
         parameter.typeKey("0", modifierFlags: .command)
-        assertCenteredSpinner(app, identifier: "plugin.selectionProgress.spinner")
+        assertLoadingRing(app)
         let selected = app.staticTexts["plugin.listFeedback"]
         let completed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@", "已选择 9"), object: selected
+            predicate: NSPredicate(format: "label == %@ OR value == %@", "已选择 9", "已选择 9"), object: selected
         )
-        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["plugin.loadingIndicator"].exists)
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(app.textFields["launcher.searchField"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testSharedListContentHeightAndScrolling() throws {
+        let script = """
+        leap.onInputChange(({text:input,setList}) => {
+          const count = parseInt(input || '1', 10);
+          setList(Array.from({length:count}, (_,i) => ({id:String(i),title:'结果 '+i,
+            description:input.includes('long') ? '很长的子标题内容'.repeat(40) : '   '})));
+        });
+        """
+        let app = try launch(source: "NumberEnumeration", openPlugin: true, script: script)
+        let parameter = app.textFields["plugin.parameterInput"]
+        XCTAssertTrue(parameter.waitForExistence(timeout: 5))
+        for input in ["1", "3", "3long", "7", "8", "9", "7", "100", "0", "3", "8", "0", "3"] {
+            let count = Int(input.replacingOccurrences(of: "long", with: ""))!
+            parameter.click()
+            parameter.typeKey("a", modifierFlags: .command)
+            parameter.typeText(input)
+            let list = app.descendants(matching: .any)["plugin.results"].firstMatch
+            if count == 0 {
+                XCTAssertTrue(app.staticTexts["plugin.emptyResults"].waitForExistence(timeout: 5))
+            } else {
+                let expected = min(CGFloat(count * 52 + (count - 1) * 4), 444)
+                let settled = XCTNSPredicateExpectation(
+                    predicate: NSPredicate { _, _ in
+                        list.exists && (input.hasSuffix("long")
+                            ? list.frame.height > expected && list.frame.height <= 444
+                            : abs(list.frame.height - expected) < 1)
+                    }, object: nil
+                )
+                XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed, "input=\(input), height=\(list.exists ? list.frame.height : -1)\n\(app.debugDescription)")
+            }
+        }
+    }
+
+    @MainActor
+    func testNumberEnumerationSameCountKeepsLayoutAndInputFocus() throws {
+        let app = try launch(source: "NumberEnumeration", openPlugin: true)
+        let parameter = app.textFields["plugin.parameterInput"]
+        XCTAssertTrue(parameter.waitForExistence(timeout: 5))
+        parameter.typeText("7")
+        let first = app.buttons["plugin.result.0"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: first)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        let list = app.descendants(matching: .any)["plugin.results"].firstMatch
+        let panel = app.dialogs["com.padding.leap.launcher"]
+        let listFrame = list.frame
+        let panelFrame = panel.frame
+        let rowFrame = first.frame
+        // 不再点击输入框，验证更新列表后输入焦点仍留在参数框。
+        for input in ["16", "25", "7"] {
+            parameter.typeKey("a", modifierFlags: .command)
+            parameter.typeText(input)
+            let subtitle = app.staticTexts["plugin.subtitle.0"]
+            let updated = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@ OR value == %@", "输入：\(input)", "输入：\(input)"),
+                object: subtitle
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 5), .completed)
+            XCTAssertEqual(list.frame, listFrame)
+            XCTAssertEqual(panel.frame, panelFrame)
+            XCTAssertEqual(first.frame, rowFrame)
+        }
     }
 
     @MainActor
@@ -51,16 +130,9 @@ final class PluginInteractionUITests: XCTestCase {
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.click()
         search.typeText("convert")
-        XCTAssertTrue(app.scrollViews["launcher.searchResults"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["launcher.searchResults"].firstMatch.waitForExistence(timeout: 5))
         search.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(app.textFields["plugin.parameterInput"].waitForExistence(timeout: 5))
-    }
-
-    @MainActor
-    private func assertCenteredSpinner(_ app: XCUIApplication, identifier: String) {
-        let spinner = app.progressIndicators[identifier]
-        XCTAssertTrue(spinner.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertEqual(spinner.frame.midX, app.windows.firstMatch.frame.midX, accuracy: 3)
     }
 
     @MainActor
@@ -100,13 +172,21 @@ final class PluginInteractionUITests: XCTestCase {
 
     @MainActor
     func testNumberEnumerationListAndSelection() throws {
+        // 实机测试会写系统剪贴板，结束后恢复原有全部格式的数据。
+        let previousItems: [NSPasteboardItem] = (NSPasteboard.general.pasteboardItems ?? []).map { original in
+            let saved = NSPasteboardItem()
+            for type in original.types {
+                if let data = original.data(forType: type) { saved.setData(data, forType: type) }
+            }
+            return saved
+        }
+        defer {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.writeObjects(previousItems)
+        }
         // 使用真实示例经安装器校验并安装，覆盖清单到宿主列表的完整链路。
-        let app = try launch(source: "NumberEnumeration")
+        let app = try launch(source: "NumberEnumeration", openPlugin: true)
         let search = app.textFields["launcher.searchField"]
-        XCTAssertTrue(search.waitForExistence(timeout: 5))
-        search.click()
-        search.typeText("number")
-        app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         let parameter = app.textFields["plugin.parameterInput"]
         XCTAssertTrue(parameter.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["launcher.settingsButton"].exists)
@@ -118,7 +198,9 @@ final class PluginInteractionUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
         let feedback = app.staticTexts["plugin.listFeedback"]
         XCTAssertTrue(feedback.waitForExistence(timeout: 5))
-        XCTAssertEqual(feedback.value as? String ?? feedback.label, "已选择：标题 1")
+        XCTAssertEqual(feedback.value as? String ?? feedback.label, "已复制：标题 1")
+        XCTAssertEqual(NSPasteboard.general.string(forType: .string), "标题 1")
+        XCTAssertFalse(app.descendants(matching: .any)["plugin.loadingIndicator"].exists)
         parameter.typeKey("a", modifierFlags: .command)
         parameter.typeText("19")
         let empty = XCTNSPredicateExpectation(
@@ -127,7 +209,7 @@ final class PluginInteractionUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [empty], timeout: 5), .completed)
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertTrue(search.waitForExistence(timeout: 5))
-        XCTAssertEqual(search.value as? String, "number")
+        XCTAssertEqual(search.value as? String, "")
     }
 
     @MainActor
@@ -318,4 +400,21 @@ final class PluginInteractionUITests: XCTestCase {
         app.activate()
         return app
     }
+}
+
+private extension PluginInteractionUITests {
+    @MainActor
+    func assertLoadingRing(_ app: XCUIApplication) {
+        let ring = app.descendants(matching: .any)["plugin.loadingIndicator"]
+        XCTAssertTrue(ring.waitForExistence(timeout: 5), app.debugDescription)
+        // 圆弧的辅助功能边界随旋转角度变化，不等同于固定 32pt 的布局框。
+        XCTAssertGreaterThan(ring.frame.width, 24)
+        XCTAssertLessThanOrEqual(ring.frame.width, 34)
+        XCTAssertGreaterThan(ring.frame.height, 24)
+        XCTAssertLessThanOrEqual(ring.frame.height, 34)
+        XCTAssertLessThan(ring.frame.maxX, app.textFields["plugin.parameterInput"].frame.minX)
+        XCTAssertFalse(app.activityIndicators["plugin.queryProgress"].exists)
+        XCTAssertFalse(app.activityIndicators["plugin.selectionProgress"].exists)
+    }
+
 }

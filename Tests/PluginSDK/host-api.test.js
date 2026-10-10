@@ -108,3 +108,48 @@ leap.onInvoke(invoke)
     assert.match((await plugin.call('invoke', 'error')).error, /不支持的系统路径/);
   });
 }
+
+
+for (const runtime of ['javascript', 'python']) {
+  test(`${runtime} 显式加载编码和中文错误传播`, async t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'LeapLoading-'));
+    const entry = path.join(directory, runtime === 'python' ? 'main.py' : 'main.js');
+    fs.writeFileSync(entry, runtime === 'python' ? `
+def input(context):
+    leap.showLoading()
+    leap.hideLoading()
+    context['setList']([])
+leap.onInputChange(input)
+` : `leap.onInputChange(async ({setList}) => {
+  const assertTrue = await leap.showLoading();
+  if (assertTrue !== true) throw new Error('结果不是 true');
+  await leap.hideLoading();
+  setList([]);
+});`);
+    let fail = false;
+    const calls = [];
+    const plugin = session(entry, 'run', runtime, (method, params) => {
+      calls.push({method, params});
+      if (fail) throw new Error('加载动画仅支持原生列表');
+      return true;
+    });
+    t.after(async () => { await plugin.close(); fs.rmSync(directory, {recursive:true, force:true}); });
+    assert.equal((await plugin.call('input')).error, undefined);
+    assert.deepEqual(calls, [{method:'showLoading', params:{}}, {method:'hideLoading', params:{}}]);
+    fail = true;
+    assert.match((await plugin.call('input')).error, /仅支持原生列表/);
+  });
+}
+
+test('网页加载接口传播不支持错误，退出后不可调用', async () => {
+  const window = { __leapContext: {commandID:'run', query:''}, webkit: {messageHandlers: {
+    leapHost: {postMessage: () => Promise.reject(new Error('加载动画仅支持原生列表'))},
+  }}};
+  vm.runInNewContext(fs.readFileSync('Resources/Leap/PluginSDK/host-api.js', 'utf8') + '\n'
+    + fs.readFileSync('Resources/Leap/PluginSDK/web.js', 'utf8'),
+    {window, Uint8Array, TextEncoder, AbortController, queueMicrotask, console, btoa, setTimeout, clearTimeout});
+  await assert.rejects(window.leap.showLoading(), /仅支持原生列表/);
+  await assert.rejects(window.leap.hideLoading(), /仅支持原生列表/);
+  window.__leapDispatch('exit', null);
+  await assert.rejects(window.leap.showLoading(), /已退出/);
+});

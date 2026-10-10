@@ -59,9 +59,18 @@ final class PluginInteractionSession: Identifiable {
                 }
             )
             self.script = script
-            let coordinator = PluginListSession { method, query, itemID, cancellation, update in
-                try await script.call(method, query: query, itemID: itemID,
-                                      cancellation: cancellation, onList: update)
+            let coordinator = PluginListSession { [weak self] method, query, itemID, cancellation, update in
+                let owner = self
+                let loading: PluginProcessSession.LoadingUpdate?
+                if configuration.presentation == .list {
+                    loading = { [weak owner] visible in
+                        Task { @MainActor [weak owner] in
+                            owner?.list?.setLoading(visible, cancellation: cancellation)
+                        }
+                    }
+                } else { loading = nil }
+                return try await script.call(method, query: query, itemID: itemID,
+                                             cancellation: cancellation, onList: update, onLoading: loading)
             }
             inputCoordinator = coordinator
             if configuration.presentation == .list { list = coordinator }

@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import Observation
+import Synchronization
 import Testing
 @testable import LeapCore
 
@@ -88,6 +90,73 @@ struct PluginInteractionManifestTests {
 
 @MainActor
 struct PluginListSessionTests {
+    @Test("相同流式和最终快照不重复发布，内容变化仍发布")
+    func identicalSnapshotsDoNotPublish() async throws {
+        let session = PluginListSession(debounce: .zero) { _, query, _, _, update in
+            update(.init(items: [.init(id: "stable", title: query)]))
+            try await Task.sleep(for: .milliseconds(10))
+            return .array([.object(["id": .string("stable"), "title": .string(query)])])
+        }
+        defer { session.close() }
+        session.updateInput("first")
+        try await waitForQuery(session)
+        let notifications = Mutex(0)
+        withObservationTracking {
+            _ = session.snapshot
+        } onChange: {
+            notifications.withLock { $0 += 1 }
+        }
+        session.updateInput("first")
+        try await waitForQuery(session)
+        #expect(notifications.withLock { $0 } == 0)
+        session.updateInput("changed")
+        try await waitForQuery(session)
+        #expect(notifications.withLock { $0 } == 1)
+        #expect(session.items.first?.title == "changed")
+        #expect(session.selectedID == "stable")
+    }
+
+    private func waitForQuery(_ session: PluginListSession) async throws {
+        let deadline = ContinuousClock.now + .seconds(2)
+        while session.isLoading, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(!session.isLoading && !session.isError)
+    }
+
+    @Test("显式加载幂等、旧回调隔离与退出清理")
+    func explicitLoadingOwnership() async throws {
+        let tokens = LoadingTokens()
+        let session = PluginListSession(debounce: .zero) { _, _, _, token, _ in
+            await tokens.append(token)
+            try await Task.sleep(for: .milliseconds(150))
+            return .array([])
+        }
+        session.updateInput("first")
+        try await Task.sleep(for: .milliseconds(30))
+        let first = try #require(await tokens.first)
+        #expect(!session.isLoadingVisible)
+        session.setLoading(true, cancellation: first)
+        session.setLoading(true, cancellation: first)
+        #expect(session.isLoadingVisible)
+        session.setLoading(false, cancellation: first)
+        #expect(!session.isLoadingVisible && session.isLoading)
+        session.updateInput("second")
+        session.setLoading(true, cancellation: first)
+        #expect(!session.isLoadingVisible)
+        try await Task.sleep(for: .milliseconds(180))
+        let second = try #require(await tokens.last)
+        session.setLoading(true, cancellation: second)
+        session.setLoading(false, cancellation: first)
+        #expect(session.isLoadingVisible)
+        try await Task.sleep(for: .milliseconds(160))
+        #expect(!session.isLoadingVisible)
+        session.setLoading(true, cancellation: second)
+        #expect(!session.isLoadingVisible)
+        session.close()
+        #expect(!session.isLoadingVisible)
+    }
+
     @Test("数字快捷键映射与修饰键边界")
     func shortcutMapping() {
         for (index, character) in "1234567890".enumerated() {
@@ -277,4 +346,11 @@ private actor ListCallProbe {
         update(.init(items: [PluginListItem(id: "result", title: query)]))
         return .array([.object(["id": .string("result"), "title": .string(query)])])
     }
+}
+
+private actor LoadingTokens {
+    private var values: [PluginInvocationCancellation] = []
+    var first: PluginInvocationCancellation? { values.first }
+    var last: PluginInvocationCancellation? { values.last }
+    func append(_ value: PluginInvocationCancellation) { values.append(value) }
 }

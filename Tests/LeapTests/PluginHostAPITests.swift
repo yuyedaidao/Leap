@@ -27,6 +27,20 @@ struct PluginHostAPITests {
         .init(pluginID: "test", commandIDs: ["run"], targetPID: nil, isActive: { true }, setWindowHidden: { _ in })
     }
 
+    @Test("网页与动作宿主拒绝列表加载接口")
+    func loadingRequiresNativeList() async throws {
+        let fixture = service()
+        defer { fixture.close() }
+        for method in ["showLoading", "hideLoading"] {
+            do {
+                _ = try await fixture.api.handle(method, params: .object([:]), context: context())
+                Issue.record("不支持的展示模式接受了加载接口")
+            } catch {
+                #expect(error.localizedDescription.contains("仅支持原生列表"))
+            }
+        }
+    }
+
     @Test("隔离剪贴板复制文本、文件与图片，校验失败不覆盖原内容")
     func clipboard() async throws {
         let fixture = service()

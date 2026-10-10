@@ -12,4 +12,8 @@ leap.onInputChange(({ text, setList }) => {
     id: String(index), title: `标题 ${index}`, description: `输入：${value || '0'}`,
   })), { title: `共${remainder}个结果` });
 });
-leap.onSelect(({ item }) => `已选择：${item.title}`);
+leap.onSelect(async ({ item }) => {
+  // 等待宿主确认复制成功；失败由 SDK 传给列表反馈，避免误报成功。
+  await leap.copyText(item.title);
+  return `已复制：${item.title}`;
+});

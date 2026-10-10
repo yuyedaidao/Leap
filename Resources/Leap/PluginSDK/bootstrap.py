@@ -89,6 +89,8 @@ leap = SimpleNamespace(
     onExit=lambda callback: subscribe("exit", callback),
     outPlugin=lambda: host_call("outPlugin"),
     hideMainWindow=lambda: host_call("hideMainWindow"),
+    showLoading=lambda: host_call("showLoading"),
+    hideLoading=lambda: host_call("hideLoading"),
     log=lambda *values: print(*values, file=sys.stderr),
 )
 

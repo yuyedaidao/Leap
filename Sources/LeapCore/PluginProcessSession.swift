@@ -50,6 +50,7 @@ extension PluginMessage {
 /// 所有可变状态限定在队列内；文件句柄回调只投递数据，不在主线程阻塞读写。
 public final class PluginProcessSession: @unchecked Sendable {
     public typealias HostCall = @Sendable (String, PluginValue) async throws -> PluginValue
+    public typealias LoadingUpdate = @Sendable (Bool) -> Void
     public typealias ListUpdate = @Sendable (PluginListSnapshot) -> Void
     private struct Pending {
         let message: PluginMessage
@@ -62,6 +63,7 @@ public final class PluginProcessSession: @unchecked Sendable {
         let cancellation: PluginInvocationCancellation?
         let observation: UUID?
         let listUpdate: ListUpdate?
+        let loadingUpdate: LoadingUpdate?
     }
     private final class WeakSession: @unchecked Sendable {
         weak var value: PluginProcessSession?
@@ -123,7 +125,7 @@ public final class PluginProcessSession: @unchecked Sendable {
     public func request(
         _ method: String, commandID: String, query: String, itemID: String? = nil,
         cancellation: PluginInvocationCancellation? = nil, timeout: TimeInterval = 3,
-        onList: ListUpdate? = nil
+        onList: ListUpdate? = nil, onLoading: LoadingUpdate? = nil
     ) async throws -> PluginValue {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
@@ -144,11 +146,12 @@ public final class PluginProcessSession: @unchecked Sendable {
                             guard self.pending[id] != nil, self.ready else { return }
                             self.send(PluginMessage(type: "cancel", id: id))
                             self.cancelHostCalls(parent: id)
+                            self.pending[id]?.loadingUpdate?(false)
                         }
                     }
                     pending[id] = Pending(message: message, continuation: continuation, deadline: deadline, remaining: max(0.01, timeout),
                                           hostRemaining: hostWaitTimeout,
-                                          cancellation: cancellation, observation: observation, listUpdate: onList)
+                                          cancellation: cancellation, observation: observation, listUpdate: onList, loadingUpdate: onLoading)
                     queue.asyncAfter(deadline: .now() + max(0.01, timeout), execute: deadline)
                     try startIfNeeded()
                     if ready { send(message) }
@@ -289,6 +292,21 @@ public final class PluginProcessSession: @unchecked Sendable {
             send(PluginMessage(type: "result", id: message.id, error: PluginSessionError.cancelled.localizedDescription))
             return
         }
+        if method == "showLoading" || method == "hideLoading" {
+            // 使用协议已有的父事件标识限定归属，不让迟到的旧查询修改新查询状态。
+            guard case let .object(fields) = params, fields.isEmpty else {
+                send(PluginMessage(type: "result", id: message.id, error: "加载接口不接受参数。"))
+                return
+            }
+            guard ["input", "select"].contains(request.message.method ?? ""), let update = request.loadingUpdate else {
+                send(PluginMessage(type: "result", id: message.id, error: "加载动画仅支持原生列表的当前查询或选择回调。"))
+                return
+            }
+            update(method == "showLoading")
+            logger.debug("原生列表加载接口：\(method)。")
+            send(PluginMessage(type: "result", id: message.id, value: .bool(true)))
+            return
+        }
         hostParents[message.id] = parent
         refreshDeadline(parent)
         let handler = hostCall
@@ -338,6 +356,7 @@ public final class PluginProcessSession: @unchecked Sendable {
     private func finish(_ id: String, result: Result<PluginValue, any Error>) {
         guard let request = pending.removeValue(forKey: id) else { return }
         request.deadline.cancel()
+        request.loadingUpdate?(false)
         cancelHostCalls(parent: id)
         if let observation = request.observation { request.cancellation?.removeObserver(observation) }
         if request.cancellation?.isCancelled == true { request.continuation.resume(throwing: PluginSessionError.cancelled) }

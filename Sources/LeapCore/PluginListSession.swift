@@ -93,6 +93,7 @@ public final class PluginListSession {
     public private(set) var selectedID: String?
     public private(set) var isLoading = false
     public private(set) var isSelecting = false
+    public private(set) var isLoadingVisible = false
     public private(set) var message: String?
     public private(set) var isError = false
     public private(set) var input = ""
@@ -116,7 +117,10 @@ public final class PluginListSession {
         input = text
         revision &+= 1
         debounceTask?.cancel()
-        if !isSelecting { cancellation?.cancel() }
+        if !isSelecting {
+            isLoadingVisible = false
+            cancellation?.cancel()
+        }
         queryReady = false
         message = nil
         isError = false
@@ -127,6 +131,12 @@ public final class PluginListSession {
             queryReady = true
             startQueryIfReady()
         }
+    }
+
+    /// 仅接受当前回调的显式加载请求；结束、取消及旧回调的迟到消息均不可重启动画。
+    public func setLoading(_ visible: Bool, cancellation token: PluginInvocationCancellation) {
+        guard isActive, cancellation === token, (!visible || !token.isCancelled), queryRunning || isSelecting else { return }
+        isLoadingVisible = visible
     }
 
     public func moveSelection(_ offset: Int) {
@@ -151,6 +161,7 @@ public final class PluginListSession {
             }
             guard let self, isActive else { return }
             isSelecting = false
+            isLoadingVisible = false
             if version == revision { display(response) }
             startQueryIfReady()
         }
@@ -166,6 +177,7 @@ public final class PluginListSession {
 
     public func close() {
         isActive = false
+        isLoadingVisible = false
         revision &+= 1
         debounceTask?.cancel()
         cancellation?.cancel()
@@ -197,6 +209,7 @@ public final class PluginListSession {
             delivery.finished = true
             guard let self, isActive else { return }
             queryRunning = false
+            isLoadingVisible = false
             // 版本号检查仍需保留：插件可能在取消前已经完成，或测试调用不响应取消。
             if revision == version {
                 isLoading = false
@@ -213,6 +226,7 @@ public final class PluginListSession {
     }
 
     private func apply(_ value: PluginListSnapshot) {
+        guard snapshot != value else { return }
         let previous = selectedID
         snapshot = value
         selectedID = items.contains(where: { $0.id == previous }) ? previous : items.first?.id

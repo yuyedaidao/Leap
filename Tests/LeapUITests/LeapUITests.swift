@@ -144,7 +144,7 @@ final class LeapUITests: XCTestCase {
         searchField.typeText("result.1")
         let firstCommand = app.buttons["launcher.command.\(pluginID)/result.1"]
         XCTAssertTrue(firstCommand.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.scrollViews["launcher.searchResults"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["launcher.searchResults"].firstMatch.exists)
 
         let expandedFrame = window.frame
         XCTAssertGreaterThan(expandedFrame.height, compactFrame.height)

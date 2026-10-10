@@ -103,11 +103,11 @@ public actor PluginScriptSession {
 
     public func call(
         _ method: String, commandID: String? = nil, query: String, itemID: String? = nil,
-        cancellation: PluginInvocationCancellation? = nil, onList: PluginProcessSession.ListUpdate? = nil
+        cancellation: PluginInvocationCancellation? = nil, onList: PluginProcessSession.ListUpdate? = nil, onLoading: PluginProcessSession.LoadingUpdate? = nil
     ) async throws -> PluginValue {
         try await start()
         return try await process.request(method, commandID: commandID ?? self.commandID, query: query,
-                                         itemID: itemID, cancellation: cancellation, onList: onList)
+                                         itemID: itemID, cancellation: cancellation, onList: onList, onLoading: onLoading)
     }
 
     public nonisolated func close() { process.close(commandID: commandID, query: initialInput) }

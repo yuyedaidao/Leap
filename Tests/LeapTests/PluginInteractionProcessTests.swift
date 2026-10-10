@@ -20,6 +20,45 @@ struct PluginInteractionProcessTests {
         #expect(result.items.first?.description == "济南市")
     }
 
+    @Test("加载开关限定当前列表事件，结束、失败及取消均清理")
+    func explicitLoadingBridge() async throws {
+        let (process, directory) = try session(script: """
+        leap.onInputChange(async ({text, setList, signal}) => {
+          await leap.showLoading();
+          await leap.showLoading();
+          if (text === 'wait') await new Promise(resolve => signal.addEventListener('abort', resolve, {once:true}));
+          if (text === 'fail') throw new Error('测试失败');
+          await leap.hideLoading();
+          setList([{id:'one',title:'结果'}]);
+        });
+        leap.onInvoke(async () => { await leap.showLoading(); });
+        """)
+        defer { process.close(); try? FileManager.default.removeItem(at: directory) }
+        _ = try await process.request("enter", commandID: "test", query: "")
+        let updates = LoadingUpdates()
+        _ = try await process.request("input", commandID: "test", query: "", onLoading: updates.update)
+        #expect(updates.values == [true, true, false, false])
+        await #expect(throws: (any Error).self) {
+            try await process.request("input", commandID: "test", query: "fail", onLoading: updates.update)
+        }
+        #expect(updates.values.last == false)
+        await #expect(throws: (any Error).self) {
+            try await process.request("input", commandID: "test", query: "")
+        }
+        await #expect(throws: (any Error).self) {
+            try await process.request("invoke", commandID: "test", query: "", onLoading: updates.update)
+        }
+        let token = PluginInvocationCancellation()
+        let pending = Task {
+            try await process.request("input", commandID: "test", query: "wait", cancellation: token,
+                                      onLoading: updates.update)
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        token.cancel()
+        await #expect(throws: PluginSessionError.cancelled) { try await pending.value }
+        #expect(updates.values.last == false)
+    }
+
     private var root: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -204,4 +243,11 @@ struct PluginInteractionProcessTests {
         #expect(stopped.isCancelled)
     }
 
+}
+
+private final class LoadingUpdates: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Bool] = []
+    var values: [Bool] { lock.withLock { storage } }
+    func update(_ visible: Bool) { lock.withLock { storage.append(visible) } }
 }

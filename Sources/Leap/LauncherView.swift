@@ -294,70 +294,22 @@ private struct LauncherSearchResults: View {
     let selectedItemID: LauncherItem.ID?
     let activate: (LauncherItem) -> Void
 
-    private let rowHeight: CGFloat = 52
-    private let rowSpacing: CGFloat = 4
-    private let maximumVisibleRows = 8
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("搜索结果")
-                .font(.headline)
-
-            ScrollView(.vertical) {
-                LazyVStack(spacing: rowSpacing) {
-                    ForEach(items.enumerated(), id: \.element.id) { index, item in
-                        SearchResultRow(item: item, isSelected: item.id == selectedItemID,
-                                        shortcut: LauncherListShortcut.hint(at: index), activate: activate)
-                            .frame(height: rowHeight)
-                    }
+            Text("搜索结果").font(.headline)
+            NativeResultList(items: items, selectedID: selectedItemID) { item, index in
+                NativeResultRow(title: item.title, subtitle: item.subtitle,
+                                isSelected: item.id == selectedItemID,
+                                shortcut: LauncherListShortcut.hint(at: index),
+                                identifierPrefix: "launcher", itemID: item.id,
+                                activate: { activate(item) }) {
+                    LauncherItemIcon(item: item).frame(width: 32, height: 32)
                 }
+                .accessibilityIdentifier(item.accessibilityID)
+                .accessibilityLabel(item.title)
             }
-            .frame(height: visibleListHeight)
             .accessibilityIdentifier("launcher.searchResults")
         }
-    }
-
-    private var visibleListHeight: CGFloat {
-        let visibleCount = min(items.count, maximumVisibleRows)
-        return CGFloat(visibleCount) * rowHeight + CGFloat(max(0, visibleCount - 1)) * rowSpacing
-    }
-}
-
-private struct SearchResultRow: View {
-    let item: LauncherItem
-    let isSelected: Bool
-    let shortcut: String?
-    let activate: (LauncherItem) -> Void
-
-    var body: some View {
-        Button {
-            activate(item)
-        } label: {
-            HStack(spacing: 12) {
-                LauncherItemIcon(item: item)
-                    .frame(width: 32, height: 32)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.title)
-                        .lineLimit(1)
-                    Text(item.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if let shortcut {
-                    Text(shortcut).font(.caption).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("launcher.shortcut.\(item.id)")
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(isSelected ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier(item.accessibilityID)
-        .accessibilityLabel(item.title)
     }
 }
 

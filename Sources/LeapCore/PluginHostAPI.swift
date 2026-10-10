@@ -232,6 +232,8 @@ extension PluginHostAPI {
         case "readCurrentFolderPath", "readCurrentBrowserUrl":
             return .string(try await readTarget(method, context: context))
         case "showNotification": try await notify(params, context: context)
+        case "showLoading", "hideLoading":
+            throw PluginSessionError.plugin("加载动画仅支持原生列表的当前查询或选择回调。")
         case "outPlugin", "hideMainWindow": break
         default: throw PluginSessionError.plugin("未知宿主接口。")
         }

@@ -94,6 +94,26 @@ SDK 随应用提供，插件无需复制运行时实现。入口采用 CommonJS�
 
 ## 原生列表：只写业务逻辑
 
+列表加载动画由开发者显式控制，不会随查询或选择自动出现。`leap.showLoading()` 与 `leap.hideLoading()` 无参数，JavaScript 返回 `Promise<boolean>`，Python 同步返回 `bool`，成功为 `true`。动画立即显示在搜索栏插件图标外缘，不改变列表或窗口尺寸；两方法均幂等。
+
+```js
+leap.onInputChange(async ({ text, setList, signal }) => {
+  await leap.showLoading();
+  try {
+    const response = await fetch('https://example.com/search?q=' + encodeURIComponent(text), { signal });
+    if (!response.ok) throw new Error('查询失败');
+    const items = await response.json();
+    setList(items);
+  } finally {
+    await leap.hideLoading();
+  }
+});
+```
+
+Python 在当前回调中对应使用 `leap.showLoading()` / `leap.hideLoading()` 与 `try/finally`。仅原生列表当前查询、选择回调支持；网页、独立窗口、动作插件调用会返回中文错误。回调结束、失败、取消或退出时宿主也会清理，旧回调不能影响新回调。动画开关不影响忙碌保护，不延长默认 3 秒业务期限；快速操作（例如数字枚举和复制）无需调用。减少动态效果开启时圆弧静止显示。
+
+默认搜索与插件列表共用 SwiftUI `List` 容器和行组件，更新时不随条目数量切换容器。行最小高度为 52pt，行间距为 4pt；标题和 `description` 均最多显示两行，空白子标题隐藏，无图标时不预留图标位置。少于八项时测量实际行高，滚动区最高 444pt；八项及以上使用 444pt 滚动区，行由 `List` 按需创建。默认搜索仍最多八项，插件仍最多一百项，长文字可能让同时可见的条目少于八项。
+
 ```js
 leap.onInputChange(({ text, setList }) => {
   const value = text.trim();
