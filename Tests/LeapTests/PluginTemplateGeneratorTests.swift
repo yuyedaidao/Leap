@@ -143,6 +143,10 @@ struct PluginTemplateGeneratorTests {
 final class TestListUpdates: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [PluginListItem] = []
+    private var listTitle: String?
     var values: [PluginListItem] { lock.withLock { storage } }
-    func update(_ values: [PluginListItem]) { lock.withLock { storage = values } }
+    var title: String? { lock.withLock { listTitle } }
+    func update(_ value: PluginListSnapshot) {
+        lock.withLock { storage = value.items; listTitle = value.title }
+    }
 }

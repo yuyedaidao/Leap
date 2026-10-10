@@ -75,6 +75,9 @@ final class LauncherModel {
 
     private let catalog: InstalledPluginCatalog?
     let pluginPaths: AppPaths?
+    let hostAPI: PluginHostAPI?
+    var externalTargetPID: Int32?
+    var inputWindowVisibility: ((Bool) -> Void)?
     private let recentStore: LauncherUsageStore
     private let scriptExecutor: PluginScriptExecutor?
     private let shellExecutor: ShellScriptExecutor?
@@ -91,6 +94,7 @@ final class LauncherModel {
     private var contentMatchers: [String: PluginCommandMatcher] = [:]
 
     var query = ""
+    var selectedSearchResultID: LauncherItem.ID?
     private(set) var commands: [PluginCommandDescriptor] = []
     private(set) var applications: [SystemApplicationDescriptor] = []
     private(set) var recentItems: [LauncherItem] = []
@@ -105,6 +109,7 @@ final class LauncherModel {
     init(paths: AppPaths) {
         catalog = InstalledPluginCatalog(paths: paths)
         pluginPaths = paths
+        hostAPI = PluginHostAPI(paths: paths)
         recentStore = LauncherUsageStore()
         scriptExecutor = PluginScriptExecutor(runtimeLocator: BundledRuntimeLocator(paths: paths))
         shellExecutor = ShellScriptExecutor()
@@ -123,6 +128,7 @@ final class LauncherModel {
     ) {
         catalog = nil
         pluginPaths = paths
+        hostAPI = paths.map { PluginHostAPI(paths: $0) }
         recentStore = LauncherUsageStore(defaults: .standard, key: "uiTestingLauncherUsageRecords")
         scriptExecutor = nil
         shellExecutor = nil
@@ -229,6 +235,20 @@ final class LauncherModel {
         activate(first)
     }
 
+    func activateListShortcut(at index: Int, isRepeat: Bool) -> Bool {
+        if let interaction { return interaction.list?.select(at: index, isRepeat: isRepeat) ?? false }
+        let results = searchResults
+        guard results.indices.contains(index) else { return false }
+        if isRepeat { return true }
+        switch invocationState {
+        case .running, .shellOutput(_, _, true): return true
+        default: break
+        }
+        selectedSearchResultID = results[index].id
+        activate(results[index])
+        return true
+    }
+
     func activate(_ item: LauncherItem) {
         switch item {
         case let .application(application):
@@ -248,11 +268,12 @@ final class LauncherModel {
                 contentMatchers[command.id]?.matchesContent(query) == true ? query : ""
             interaction = PluginInteractionSession(
                 command: command, configuration: configuration,
-                previousSearch: query, initialInput: initialInput, executor: scriptExecutor
+                previousSearch: query, initialInput: initialInput, executor: scriptExecutor,
+                hostAPI: hostAPI, targetPID: externalTargetPID, inputWindowVisibility: inputWindowVisibility
             )
             interaction?.hostAction = { [weak self] method in
                 if method == "outPlugin" { self?.exitInteraction() }
-                else if method == "hideMainWindow" { self?.exitInteraction(); self?.hideRequested?() }
+                else if method == "hideMainWindow" || PluginHostAPI.inputMethods.contains(method) { self?.exitInteraction(); self?.hideRequested?() }
             }
             invocationState = .idle
             recordRecent(command)
@@ -266,6 +287,8 @@ final class LauncherModel {
         }
         guard configuration.mode == .action || command.manifest.webEntry == nil else {
             webCommand = command
+            // 与内嵌交互插件一致，打开窗口即记录使用，无需等待网页调用脚本。
+            recordRecent(command)
             webPluginRequested?(command)
             return
         }
@@ -295,7 +318,8 @@ final class LauncherModel {
             command: command,
             configuration: .init(id: command.commandID, title: command.title, mode: .interactive,
                                  presentation: .web, input: .init(enabled: false)),
-            previousSearch: query, initialInput: "", executor: scriptExecutor
+            previousSearch: query, initialInput: "", executor: scriptExecutor,
+            hostAPI: hostAPI, targetPID: externalTargetPID, inputWindowVisibility: inputWindowVisibility
         )
     }
 
@@ -407,19 +431,20 @@ extension LauncherModel {
         }
         closeActionSession()
         let id = UUID()
+        let targetPID = externalTargetPID
         actionID = id
         do {
             let session = try scriptExecutor.makeSession(
                 manifest: command.manifest, pluginDirectory: command.pluginDirectory, commandID: commandID, query: query,
                 hostCall: { [weak self] method, params in
                     guard let self else { throw PluginSessionError.closed }
-                    return try await self.handleActionHostCall(method, params: params, id: id)
+                    return try await self.handleActionHostCall(method, params: params, id: id, command: command, targetPID: targetPID)
                 }, onHostReply: { [weak self] method in
                     Task { @MainActor in
                         guard let self, self.actionID == id else { return }
-                        if method == "outPlugin" || method == "hideMainWindow" {
+                        if method == "outPlugin" || method == "hideMainWindow" || PluginHostAPI.inputMethods.contains(method) {
                             self.closeActionSession()
-                            if method == "hideMainWindow" { self.hideRequested?() }
+                            if method == "hideMainWindow" || PluginHostAPI.inputMethods.contains(method) { self.hideRequested?() }
                         }
                     }
                 }
@@ -445,17 +470,15 @@ extension LauncherModel {
         actionSession = nil
     }
 
-    private func handleActionHostCall(_ method: String, params: PluginValue, id: UUID) throws -> PluginValue {
-        guard actionID == id else { throw PluginSessionError.closed }
-        switch method {
-        case "copyText":
-            guard let text = params["text"]?.string else { throw PluginSessionError.invalidMessage }
-            NSPasteboard.general.clearContents()
-            guard NSPasteboard.general.setString(text, forType: .string) else { throw PluginSessionError.plugin("复制失败。") }
-        case "outPlugin", "hideMainWindow": break
-        default: throw PluginSessionError.invalidMessage
-        }
-        return .bool(true)
+    private func handleActionHostCall(
+        _ method: String, params: PluginValue, id: UUID, command: PluginCommandDescriptor, targetPID: Int32?
+    ) async throws -> PluginValue {
+        guard actionID == id, let hostAPI else { throw PluginSessionError.closed }
+        return try await hostAPI.handle(method, params: params, context: .init(
+            pluginID: command.pluginID, commandIDs: Set(command.manifest.commands.map(\.id)), targetPID: targetPID,
+            isActive: { [weak self] in self?.actionID == id },
+            setWindowHidden: { [weak self] hidden in self?.inputWindowVisibility?(hidden) }
+        ))
     }
 
 }

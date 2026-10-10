@@ -18,9 +18,30 @@ final class LauncherPanelController {
     private let model: LauncherModel
     private var panel: LauncherPanel?
     private let pluginWindowController = PluginWebWindowController()
+    private var inputWasStandalone = false
 
     init(model: LauncherModel) {
         self.model = model
+        model.inputWindowVisibility = { [weak self] hidden in
+            guard let self else { return }
+            if hidden {
+                self.inputWasStandalone = self.pluginWindowController.isVisible
+                self.panel?.orderOut(nil)
+                self.pluginWindowController.setInputHidden(true)
+            } else if self.inputWasStandalone {
+                self.pluginWindowController.setInputHidden(false)
+            } else {
+                self.panel?.makeKeyAndOrderFront(nil)
+            }
+        }
+        model.hostAPI?.configureNotifications()
+        model.hostAPI?.notificationCommand = { [weak self] pluginID, commandID in
+            guard let self else { return }
+            self.model.reloadPlugins()
+            guard let command = self.model.commands.first(where: { $0.pluginID == pluginID && $0.commandID == commandID }) else { return }
+            self.present()
+            self.model.activate(command)
+        }
         model.hideRequested = { [weak self] in self?.panel?.orderOut(nil) }
         model.applicationDidLaunch = { [weak self] in self?.hideAfterApplicationLaunch() }
         model.webPluginRequested = { [weak self] command in
@@ -44,6 +65,10 @@ final class LauncherPanelController {
         fallbackLocation: NSPoint? = nil
     ) -> Duration {
         let start = clock.now
+        if let application = NSWorkspace.shared.frontmostApplication,
+           application.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+            model.externalTargetPID = application.processIdentifier
+        }
         let panel = panel ?? createPanel()
         self.panel = panel
 
@@ -121,6 +146,8 @@ final class LauncherPanelController {
         // 启动器应跟随当前 Mission Control 桌面，而非永久附着在首次创建时的空间。
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.identifier = NSUserInterfaceItemIdentifier("com.padding.leap.launcher")
+        panel.preservesHostCall = { [weak model] in (model?.hostAPI?.pendingCalls ?? 0) > 0 }
+        panel.activateListShortcut = { [weak model] in model?.activateListShortcut(at: $0, isRepeat: $1) ?? false }
         panel.exitInteraction = { [weak model] in
             guard let model, model.interaction != nil else { return false }
             model.exitInteraction()
@@ -217,7 +244,20 @@ private final class LauncherPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     var exitInteraction: (() -> Bool)?
+    var preservesHostCall: (() -> Bool)?
+    var activateListShortcut: ((Int, Bool) -> Bool)?
     private var consumesEscape = false
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let isComposing = (firstResponder as? any NSTextInputClient)?.hasMarkedText() == true
+        if isKeyWindow, attachedSheet == nil, NSApp.modalWindow == nil, !isComposing, event.type == .keyDown,
+           let key = event.charactersIgnoringModifiers,
+           let index = LauncherListShortcut.index(for: key, modifiers: event.modifierFlags) {
+            // 在窗口层处理，避免 LazyVStack 未挂载的第九、十项没有快捷键。
+            if activateListShortcut?(index, event.isARepeat) == true { return true }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     override func sendEvent(_ event: NSEvent) {
         let isEscape = (event.type == .keyDown || event.type == .keyUp) && event.keyCode == 53
@@ -250,7 +290,7 @@ private final class LauncherPanel: NSPanel {
         guard attachedSheet == nil else { return }
         // 更换输入框时 AppKit 会短暂交还焦点；本轮交接结束后再判断是否真的离开面板。
         Task { @MainActor [weak self] in
-            guard let self, !isKeyWindow, attachedSheet == nil, isVisible else { return }
+            guard let self, !isKeyWindow, attachedSheet == nil, isVisible, preservesHostCall?() != true else { return }
             _ = exitInteraction?()
             Self.logger.debug("启动器失去键盘焦点，已收起。")
             orderOut(nil)

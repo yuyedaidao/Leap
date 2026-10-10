@@ -48,6 +48,8 @@ SDK 随应用提供，插件无需复制运行时实现。入口采用 CommonJS�
 }
 ```
 
+当前生成器创建内嵌网页。要改为独立窗口，省略网页命令的 `mode`、`presentation`、`input`，保留 `webEntry` 和 `webWindow`；完整示例见 [独立窗口示例](../Examples/Plugins/StandaloneWindow/README.md)。
+
 要改为直接执行插件，将命令改为 `mode: "action"`，删除命令的 `presentation`/`input`；没有其他网页命令时也可删除 `webEntry`/`webWindow`。
 
 后文数字枚举使用原生列表：将 `presentation` 改为 `"list"`，将 `input` 改为 `{ "enabled": true, "placeholder": "请输入数字" }`，并删除 `webEntry`/`webWindow`。
@@ -75,7 +77,7 @@ SDK 随应用提供，插件无需复制运行时实现。入口采用 CommonJS�
 | `webWindow.height` | integer / 配置尺寸时必填 | 至少 300，单位为 macOS 逻辑点。 |
 | `icon` | string / 否 | 已存在的目录内相对路径，扩展名为 PNG、JPG、JPEG 或 ICNS，不区分大小写。 |
 
-独立窗口的宽高包含宿主操作栏，不包含系统标题栏；支持拖动调整大小，重新打开恢复清单尺寸。内嵌网页宽度跟随宿主可用内容区，`webWindow.width`用于独立窗口，`height`作为含70点操作栏的初始内容高度参考并按可用屏幕裁剪。生成器默认800 × 600；未配置尺寸的内嵌网页使用600高度参考，独立窗口使用560 × 360。
+独立窗口的宽高为网页内容尺寸，不包含系统标题栏；窗口只保留系统标题栏，通过系统关闭按钮或 Escape 关闭。支持拖动调整大小，重新打开恢复清单尺寸。内嵌网页宽度跟随宿主可用内容区，`webWindow.width`用于独立窗口，`height`作为含70点操作栏的初始内容高度参考并按可用屏幕裁剪。生成器默认800 × 600；未配置尺寸的内嵌网页使用600高度参考，独立窗口使用560 × 360。
 
 未知清单字段目前会被解码器忽略，不会自动产生新能力。模板生成器对 ID、三段数字版本等有更严格的表单校验，那是生成器规则，不是所有手写清单都必须遵循的宿主校验。
 
@@ -102,17 +104,21 @@ leap.onInputChange(({ text, setList }) => {
   let remainder = 0;
   for (const digit of value) remainder = (remainder + Number(digit)) % 10;
   setList(Array.from({ length: remainder }, (_, index) => ({
-    id: String(index), title: `标题 ${index}`,
-  })));
+    id: String(index), title: `标题 ${index}`, description: `输入：${value || '0'}`,
+  })), { title: `共${remainder}个结果` });
 });
 leap.onSelect(({ item }) => `已选择：${item.title}`);
 ```
 
-输入 `123` 得到标题 0 至标题 5；输入 `19` 得到空列表。参数变化时宿主约 16ms 合并连续输入，中文组合输入完成后才发送。上下键选择，Enter 执行，Escape 返回搜索，再按 Escape 收起。
+输入 `123` 得到标题 0 至标题 5；输入 `19` 得到空列表。参数变化时宿主约 16ms 合并连续输入，中文组合输入完成后才发送。上下键定位，Enter 执行；⌘1–⌘9 直接执行前九项，⌘0 执行第十项，最近使用网格不使用这些快捷键。默认搜索结果也支持数字快捷执行，保持最多八项。Escape 返回搜索，再按 Escape 收起。
 
-列表最多 100 项，使用 `{ id, title, description? }`。ID 必须非空且唯一，标题必须非空，description 为可选字符串。相同业务条目应使用稳定 ID；仍存在的选中 ID 在更新后保留。
+列表最多 100 项，使用 `{ id, title, description? }`。ID 必须非空且唯一，标题必须非空。`description` 是每个条目下方的子标题，使用较小字号与次要文字颜色、最多两行；缺省或空白时隐藏。相同业务条目应使用稳定 ID；仍存在的选中 ID 在更新后保留。
 
-`setList` 可以在回调结束前多次调用。没有调用即完成时显示空列表；业务异常显示错误，下次合法输入可恢复。等待新输入结果期间旧条目不能执行，避免输入和选择串号。
+`setList(items, { title: '共23个结果' })` 可设置列表顶部的动态标题；它不是搜索栏中的插件/命令标题，也不是列表条目。顶部标题为单行纯文本，超长可悬停查看。每批更新同时替换条目和标题，省略标题或传入空白字符串会隐藏标题。旧 `setList(items)` 调用保持兼容；这些新增界面能力需要包含列表更新的宿主构建。
+
+Python 使用 `context['setList']([{'id': '407', 'title': '活力天桥 407', 'description': '济南市'}], {'title': '共1个结果'})`。网页继续自行绘制列表，不支持 `setList`。
+
+`setList` 可以在回调结束前多次调用。没有调用即完成时显示空列表并清除顶部标题；业务异常显示错误，下次合法输入可恢复。等待新输入结果期间保留上一批条目和顶部标题，但旧条目不能执行，避免输入和选择串号。查询和执行期间数字快捷键不会排队或重复执行；输入法组合文字和弹窗期间不拦截。
 
 ## leap API
 
@@ -244,3 +250,43 @@ xcodebuild test -workspace Leap.xcworkspace -scheme Leap -destination 'platform=
 SDK 使用 uTools 的对象与回调设计作为参考，但不提供 Electron 或全部 uTools API 的兼容实现。
 
 功能测试、性能数据和验证限制见 [SDK 验证记录](PluginSDKValidation.md)。
+
+## 系统 API（新增能力）
+
+以下接口需要包含本次 SDK 更新的 Leap 构建。网页使用 `window.leap`，Node.js 使用 `leap`，返回 Promise；Python 使用相同方法名并同步返回，失败抛出异常。操作返回 `true`，查询返回数据。示例见 [HostAPI](../Examples/Plugins/HostAPI/README.md)。
+
+| 能力 | 方法 | 参数与返回 |
+| --- | --- | --- |
+| 复制 | `copyText(text)`、`copyFile(filePath)`、`copyImage(image)` | 文本为字符串；文件为绝对路径或非空路径数组，支持目录；图片为绝对路径、Base64 Data URL 或 JS Uint8Array / Python bytes、bytearray |
+| 剪贴板文件 | `getCopyedFiles()` | 返回 `{path, name, isFile, isDiractory}[]`；`isDiractory` 保留 uTools 的字段拼写，没有文件时为空数组 |
+| 外部粘贴 | `hideMainWindowPasteText(text)`、`hideMainWindowPasteFile(filePath)`、`hideMainWindowPasteImage(image)` | 先复制，再恢复唤起 Leap 前的应用并发送 Command-V；剪贴板保留复制结果 |
+| 外部输入 | `hideMainWindowTypeString(text)` | Unicode 输入，支持中文和 Emoji，不修改剪贴板 |
+| 通知 | `showNotification(body, clickFeatureCode?)` | 可选命令 ID 必须属于当前插件；点击后只激活仍安装的有效命令 |
+| 文件操作 | `shellOpenPath(fullPath)`、`shellTrashItem(fullPath)`、`shellShowItemInFolder(fullPath)` | 默认应用打开、移动至废纸篓、Finder 定位；只接受存在且可访问的绝对路径，不执行永久删除 |
+| 系统操作 | `shellOpenExternal(url)`、`shellBeep()` | 系统打开绝对 URL（本地文件用 shellOpenPath；不支持 javascript/data），播放提示音 |
+| 信息 | `getNativeId()`、`getAppName()`、`getAppVersion()` | 本机当前用户持久 UUID、Leap 名称、应用版本；清除 Leap 数据后 UUID 变化 |
+| 路径 | `getPath(name)` | home/appData/userData/temp/exe/desktop/documents/downloads/music/pictures/videos/logs；userData 是 Leap Application Support，logs 是 ~/Library/Logs/Leap |
+| 图标 | `getFileIcon(filePath)` | 路径、`.扩展名`或 `folder`，返回 PNG Data URL |
+| 目标窗口 | `readCurrentFolderPath()`、`readCurrentBrowserUrl()` | Finder 当前目录，或 Safari/Chrome/Arc 当前标签页 URL；前台为 Leap 时使用唤起前应用，类型不符或窗口不可用则报错 |
+| 环境 | `isDev()`、`isMacOS()`、`isWindows()`、`isLinux()` | 当前没有开发加载模式，分别返回 false、true、false、false |
+| 键盘 | `simulateKeyboardTap(key, ...modifiers)` | 当前焦点窗口的一次按下/释放，不隐藏 Leap |
+
+键名忽略大小写，支持字母、数字、常用标点、space/enter/return/tab/escape/esc/backspace/delete/up/down/left/right/home/end/pageup/pagedown/F1–F20；修饰键支持 shift、ctrl/control、alt/option、meta/command/cmd，重复项去重，未知项报错。键码遵循 macOS 虚拟键布局，输入任意文字请使用 TypeString。
+
+图片源数据最多 16MB，最多 6400 万像素；通信帧最多 24MB，以容纳 Base64。先完成参数及图片校验，再覆盖剪贴板。系统接口仅对当前有效会话开放；网页子框架或导航后的页面不获得接口授权。插件仍按安装时的脚本信任机制运行，并不具备新的文件系统沙箱。
+
+外部输入需辅助功能授权；Finder/浏览器查询需自动化授权；通知需通知授权。拒绝授权会返回中文错误，授权后重新调用。宿主恢复焦点最多等待 1 秒，焦点被切换时停止输入；失败恢复插件窗口。成功输入提交回复后会退出插件且不恢复启动器，不要在这类调用之后继续依赖宿主接口。`hideMainWindow` 保持退出语义，不能将“隐藏后模拟按键”当作可靠的连续调用。
+
+业务执行期限为 3 秒，宿主等待期间暂停业务计时，每个事件累计宿主等待最多 60 秒。超时和取消结束宿主任务；重要数据不要放在异步 onExit 中保存。系统输入成功只说明事件已发送，不能保证第三方应用接受，也不能回滚已经输入的内容。
+
+```js
+// 网页与 Node.js 均可使用；示例按钮会明确触发副作用。
+await leap.copyText('你好，Leap 😀');
+const files = await leap.getCopyedFiles();
+const downloads = await leap.getPath('downloads');
+```
+
+```python
+leap.copyText('你好，Leap 😀')
+files = leap.getCopyedFiles()
+```

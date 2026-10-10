@@ -21,10 +21,12 @@
         <div class="grid">
           <label>插件名称<input id="pluginName" name="name" required placeholder="我的插件"></label>
           <label>版本<input name="version" required value="1.0.0" pattern="[0-9]+\.[0-9]+\.[0-9]+" placeholder="1.0.0"></label>
-          <label>插件类型<select id="runtime" name="runtime"><option value="javascript">JavaScript</option><option value="python">Python</option><option value="shell">Shell（zsh）</option></select></label>
-          <label id="widthOption">独立窗口兼容宽度<input id="width" name="width" type="number" min="400" step="1" value="800" required></label>
+
+          <label id="widthOption">内容默认宽度<input id="width" name="width" type="number" min="400" step="1" value="800" required></label>
           <label id="heightOption">内容默认高度<input id="height" name="height" type="number" min="300" step="1" value="600" required></label>
+          <label>插件类型<select id="runtime" name="runtime"><option value="javascript">JavaScript</option><option value="python">Python</option><option value="shell">Shell（zsh）</option></select></label>
         </div>
+        <p class="hint">内嵌网页宽度跟随启动器，默认宽度仅用于独立窗口；内嵌网页默认高度包含宿主操作栏；独立窗口默认高度为网页内容高度，不包含系统标题栏。尺寸按可用屏幕裁剪。独立窗口可拖动调整大小，重新打开恢复默认尺寸。</p>
         <p id="runtimeHint" class="hint">脚本按命令 ID 分派；JavaScript/Python 不支持后台执行。</p>
         <h2>命令配置</h2>
         <div id="commands">

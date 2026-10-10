@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>独立窗口示例</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; padding: 24px; }
+    button { padding: 8px 16px; font: inherit; }
+    #result { display: block; margin-top: 16px; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>独立窗口示例</h1>
+  <p>拖动窗口边缘可调整大小；重新打开会恢复默认尺寸。</p>
+  <button id="invoke" type="button">调用脚本</button>
+  <output id="result" role="status" aria-live="polite"></output>
+  <script>
+    const button = document.querySelector('#invoke');
+    const result = document.querySelector('#result');
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      result.textContent = '正在调用…';
+      try {
+        result.textContent = await window.leap.invoke('standalone-window.run', '');
+      } catch (error) {
+        result.textContent = `调用失败：${error instanceof Error ? error.message : String(error)}`;
+        console.error('独立窗口脚本调用失败：', error);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

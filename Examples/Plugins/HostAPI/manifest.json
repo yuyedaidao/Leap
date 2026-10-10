@@ -1,0 +1,19 @@
+{
+  "id": "com.example.leap.host-api",
+  "name": "SDK 系统 API 示例",
+  "version": "1.0.0",
+  "minimumHostVersion": "1.2.0",
+  "runtime": "javascript",
+  "entry": "main.js",
+  "webEntry": "index.html",
+  "webWindow": {
+    "width": 800,
+    "height": 700
+  },
+  "commands": [
+    {
+      "id": "host-api.run",
+      "title": "SDK 系统 API 示例"
+    }
+  ]
+}

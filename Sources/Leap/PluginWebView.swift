@@ -7,19 +7,9 @@ import YQLogger
 struct PluginWebContent: View {
     let command: PluginCommandDescriptor
     let session: PluginInteractionSession
-    let dismiss: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(command.title)
-                    .font(.headline)
-                Spacer()
-                Button("关闭", action: dismiss)
-                    .accessibilityIdentifier("plugin.closeButton")
-            }
-            .padding()
-
             if let webEntry = command.manifest.webEntry {
                 PluginWebView(
                     pageURL: command.pluginDirectory.appendingPathComponent(webEntry),
@@ -95,7 +85,11 @@ struct PluginWebView: NSViewRepresentable {
                   let source = try? String(contentsOf: url, encoding: .utf8) else {
                 return "throw new Error(\"Leap SDK 资源不可用。\");"
             }
-            return "window.__leapContext = \(initialContext);\n" + source
+            guard let hostURL = Bundle.main.url(forResource: "host-api", withExtension: "js", subdirectory: "PluginSDK"),
+                  let hostSource = try? String(contentsOf: hostURL, encoding: .utf8) else {
+                return "throw new Error(\"Leap 宿主 SDK 资源不可用。\");"
+            }
+            return "window.__leapContext = \(initialContext);\n" + hostSource + "\n" + source
         }
         private var lastQuery: String?
         private var latestQuery: String?
@@ -209,16 +203,41 @@ struct PluginWebView: NSViewRepresentable {
             if message.name == "leapHost" {
                 guard let body = message.body as? [String: Any], let method = body["method"] as? String,
                       let params = body["params"], JSONSerialization.isValidJSONObject(params),
-                      let data = try? JSONSerialization.data(withJSONObject: params), data.count <= 1024 * 1024,
+                      let data = try? JSONSerialization.data(withJSONObject: params), data.count <= 24 * 1024 * 1024,
                       let value = try? JSONDecoder().decode(PluginValue.self, from: data), let interaction else {
                     replyHandler(nil, "宿主接口参数无效。"); return
                 }
-                do {
-                    let result = try interaction.handleHostCall(method, params: value)
-                    replyHandler(result == .bool(true), nil)
-                    // 回复已提交给 WebKit 后才关闭页面，避免调用者永远等不到确认。
-                    Task { @MainActor [weak interaction] in interaction?.hostAction?(method) }
-                } catch { replyHandler(nil, error.localizedDescription) }
+                if method == "__cancelHostCall", let callID = value["callID"]?.string {
+                    interaction.cancelWebHostCall(callID)
+                    replyHandler(true, nil)
+                    return
+                }
+                guard let callID = body["callID"] as? String, callID.hasPrefix("web-host-"), callID.count <= 64 else {
+                    replyHandler(nil, "宿主调用标识无效。")
+                    return
+                }
+                let hostTask: Task<PluginValue, any Error>
+                do { hostTask = try interaction.startWebHostCall(method, params: value, callID: callID) }
+                catch { replyHandler(nil, error.localizedDescription); return }
+                Task { @MainActor in
+                    let deadline = Task {
+                        try await Task.sleep(for: .seconds(60))
+                        hostTask.cancel()
+                    }
+                    defer { deadline.cancel(); interaction.finishWebHostCall(callID) }
+                    do {
+                        let result = try await hostTask.value
+                        let encoded = try JSONEncoder().encode(result)
+                        guard encoded.count <= 24 * 1024 * 1024 else { throw PluginSessionError.messageTooLarge }
+                        let object = try JSONSerialization.jsonObject(with: encoded, options: .fragmentsAllowed)
+                        replyHandler(object, nil)
+                        // 回复已提交给 WebKit 后才关闭页面，避免调用者永远等不到确认。
+                        Task { @MainActor [weak interaction] in
+                            guard let interaction, interaction.isActive else { return }
+                            interaction.hostAction?(method)
+                        }
+                    } catch { replyHandler(nil, error.localizedDescription) }
+                }
                 return
             }
             if message.name == "leapDirectory" {

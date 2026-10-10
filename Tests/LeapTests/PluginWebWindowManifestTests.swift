@@ -47,6 +47,36 @@ struct PluginWebWindowManifestTests {
         }
     }
 
+    @Test("独立窗口示例通过实际清单校验并能调用脚本")
+    func standaloneWindowExample() async throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let directory = root.appendingPathComponent("Examples/Plugins/StandaloneWindow")
+        let manifest = try PluginManifestValidator().load(from: directory)
+        let command = try #require(manifest.commands.first)
+        // 宿主以未声明 mode 且存在 webEntry 的组合选择独立窗口路由。
+        #expect(command.mode == nil)
+        #expect(command.presentation == nil)
+        #expect(command.input == nil)
+        #expect(manifest.webEntry == "index.html")
+        #expect(manifest.webWindow == .init(width: 800, height: 600))
+        let process = PluginProcessSession(
+            executable: root.appendingPathComponent("Resources/Leap/Runtimes/node-24.21.0/bin/node"),
+            arguments: [root.appendingPathComponent("Resources/Leap/PluginSDK/bootstrap.cjs").path,
+                        directory.appendingPathComponent(manifest.entry).path],
+            hostCall: { _, _ in .bool(true) }
+        )
+        defer { process.close() }
+        _ = try await process.request("enter", commandID: command.id, query: "")
+        #expect(try await process.request("invoke", commandID: command.id, query: "").string
+            == "你好，这是独立窗口中的脚本返回结果！")
+        await #expect(throws: (any Error).self) {
+            try await process.request("invoke", commandID: "unknown", query: "")
+        }
+        #expect(try await process.request("invoke", commandID: command.id, query: "").string
+            == "你好，这是独立窗口中的脚本返回结果！")
+    }
+
     private func data(size: [String: Any]?, withUI: Bool = true) throws -> Data {
         var object: [String: Any] = [
             "id": "com.example.window", "name": "窗口", "version": "1.0.0",

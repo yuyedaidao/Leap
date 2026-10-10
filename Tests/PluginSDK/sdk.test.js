@@ -59,7 +59,7 @@ test('取消信号阻止过期列表发布', async t => {
         if (signal.aborted) resolve();
         else signal.addEventListener('abort',resolve,{once:true});
       });
-      setList([{id:'old',title:'过期'}]);
+      setList([{id:'old',title:'过期'}], {title:'过期标题'});
     });
   `);
   await plugin.call('invoke'); // 无处理器的业务错误不终止会话，且进入已经完成。
@@ -67,7 +67,9 @@ test('取消信号阻止过期列表发布', async t => {
   // request 在 await ready 后投递；下一事件循环写入取消，使两个消息粘在同一管道也可处理。
   await new Promise(resolve => setImmediate(resolve));
   plugin.send({ type: 'cancel', id: '3' });
-  assert.deepEqual((await result).items, []);
+  const cancelled = await result;
+  assert.deepEqual(cancelled.items, []);
+  assert.equal(cancelled.updates.length, 0);
 });
 
 test('非法列表返回可读错误，合法输入恢复', async t => {
@@ -115,3 +117,62 @@ leap.onSelect(lambda context: context['item']['title'])
   assert.deepEqual(result.value, [{id:'one',title:'原值'}]);
   assert.equal((await plugin.call('select', 'query', 'one')).value, '原值');
 });
+
+for (const runtime of ['javascript', 'python']) {
+  test(`${runtime} 动态列表标题、子标题与旧数组结果兼容`, async t => {
+    const source = runtime === 'python' ? `
+saved = None
+def query(context):
+    global saved
+    if saved:
+        saved([], {'title': '不应发布'})
+    items = [{'id': 'one', 'title': '结果', 'description': '子标题'}]
+    if context['text'] == 'legacy':
+        context['setList'](items)
+    else:
+        options = {'title': '第一批'}
+        context['setList'](items, options)
+        options['title'] = '修改后'
+        context['setList'](items, {'title': context['text']})
+    saved = context['setList']
+leap.onInputChange(query)
+leap.onSelect(lambda context: context['item']['description'])
+` : `
+let saved;
+leap.onInputChange(({text, setList}) => {
+  if (saved) saved([], {title:'不应发布'});
+  const items = [{id:'one', title:'结果', description:'子标题'}];
+  if (text === 'legacy') setList(items);
+  else {
+    const options = {title:'第一批'};
+    setList(items, options); options.title = '修改后';
+    setList(items, {title:text});
+  }
+  saved = setList;
+});
+leap.onSelect(({item}) => item.description);`;
+    const plugin = fixture(t, source, undefined, runtime);
+    const result = await plugin.call('input', '最终标题');
+    assert.deepEqual(result.updates.map(value => value.title), ['第一批', '最终标题']);
+    assert.deepEqual(result.value, { items: [{id:'one', title:'结果', description:'子标题'}], title:'最终标题' });
+    assert.equal((await plugin.call('select', '最终标题', 'one')).value, '子标题');
+    const legacy = await plugin.call('input', 'legacy');
+    assert.equal(legacy.updates.length, 1);
+    assert.ok(Array.isArray(legacy.value));
+    const cleared = await plugin.call('input', '');
+    assert.equal(cleared.value.title, '');
+  });
+
+  test(`${runtime} 非法标题返回中文错误后可以继续发布`, async t => {
+    const source = runtime === 'python' ? `
+import json
+leap.onInputChange(lambda context: context['setList']([], json.loads(context['text'])))
+` : `leap.onInputChange(({text,setList}) => setList([], JSON.parse(text)));`;
+    const plugin = fixture(t, source, undefined, runtime);
+    for (const options of [[], 1, {title:1}, {title:null}]) {
+      assert.match((await plugin.call('input', JSON.stringify(options))).error, /标题|选项/);
+    }
+    assert.deepEqual((await plugin.call('input', '{"title":"恢复"}')).value, {items:[], title:'恢复'});
+    assert.ok(Array.isArray((await plugin.call('input', '{}')).value));
+  });
+}

@@ -26,14 +26,14 @@ final class PluginWebWindowController: NSObject, NSWindowDelegate {
         self.session = session
         restoresLauncher = true
         session.hostAction = { [weak self] method in
-            if method == "hideMainWindow" { self?.restoresLauncher = false }
-            if method == "outPlugin" || method == "hideMainWindow" { self?.window?.close() }
+            if method == "hideMainWindow" || PluginHostAPI.inputMethods.contains(method) { self?.restoresLauncher = false }
+            if method == "outPlugin" || method == "hideMainWindow" || PluginHostAPI.inputMethods.contains(method) {
+                self?.window?.close()
+            }
         }
         self.onClose = onClose
         window.title = command.title
-        let content = PluginWebContent(command: command, session: session) { [weak window] in
-            window?.close()
-        }
+        let content = PluginWebContent(command: command, session: session)
         let hosting = NSHostingController(rootView: content)
         // 默认大小由清单决定，不能被 SwiftUI 的理想尺寸重新覆盖。
         hosting.sizingOptions = []
@@ -54,6 +54,13 @@ final class PluginWebWindowController: NSObject, NSWindowDelegate {
         // 关闭时释放网页及其桥接授权，不让隐藏页面继续占用资源或发送请求。
         window?.contentViewController = nil
         callback?(restoresLauncher)
+    }
+
+    var isVisible: Bool { window?.isVisible == true }
+
+    func setInputHidden(_ hidden: Bool) {
+        if hidden { window?.orderOut(nil) }
+        else { NSApp.activate(); window?.makeKeyAndOrderFront(nil) }
     }
 
     func close() { restoresLauncher = false; window?.close(); session?.close(); session = nil }

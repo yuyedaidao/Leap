@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SDK 系统 API 示例</title>
+  <style>
+    :root { color-scheme: light dark; font: 14px system-ui; }
+    body { margin: 24px; }
+    input, button { padding: 9px; font: inherit; }
+    input { width: 100%; box-sizing: border-box; margin-bottom: 12px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    p { line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <h1>SDK 系统 API 示例</h1>
+  <p>系统信息和查询不会修改文件。复制会覆盖剪贴板；外部输入会切回唤起 Leap 前的应用并退出插件。请先在目标应用中放好光标。</p>
+  <label for="text">示例文本</label><input id="text" value="你好，Leap 😀">
+  <div class="actions">
+    <button data-action="info">系统信息</button>
+    <button data-action="copy">复制文本</button>
+    <button data-action="files">读取剪贴板文件</button>
+    <button data-action="folder">读取 Finder 目录</button>
+    <button data-action="browser">读取浏览器 URL</button>
+    <button data-action="icon">查看文本文件图标</button>
+    <button data-action="notification">发送通知</button>
+    <button data-action="beep">播放提示音</button>
+    <button data-action="paste">粘贴到外部应用并退出</button>
+    <button data-action="type">输入到外部应用并退出</button>
+    <button data-action="keyboard">模拟左方向键（当前焦点）</button>
+  </div>
+  <pre id="result" role="status" aria-live="polite"></pre>
+  <img id="icon" alt="文本文件系统图标" hidden width="64" height="64">
+  <script>
+    const result = document.querySelector('#result');
+    const text = document.querySelector('#text');
+    const actions = {
+      info: async () => ({ name: await window.leap.getAppName(), version: await window.leap.getAppVersion(),
+        home: await window.leap.getPath('home'), userData: await window.leap.getPath('userData'), macOS: await window.leap.isMacOS() }),
+      copy: () => window.leap.copyText(text.value),
+      files: () => window.leap.getCopyedFiles(),
+      folder: () => window.leap.readCurrentFolderPath(),
+      browser: () => window.leap.readCurrentBrowserUrl(),
+      icon: async () => {
+        const image = document.querySelector('#icon');
+        image.src = await window.leap.getFileIcon('.txt'); image.hidden = false;
+        return '图标已显示';
+      },
+      notification: () => window.leap.showNotification(text.value, 'host-api.run'),
+      beep: () => window.leap.shellBeep(),
+      paste: () => window.leap.hideMainWindowPasteText(text.value),
+      type: () => window.leap.hideMainWindowTypeString(text.value),
+      keyboard: () => window.leap.simulateKeyboardTap('left'),
+    };
+    for (const button of document.querySelectorAll('[data-action]')) {
+      button.addEventListener('click', async () => {
+        const buttons = document.querySelectorAll('[data-action]');
+        for (const item of buttons) item.disabled = true;
+        result.textContent = '正在执行…';
+        try { result.textContent = JSON.stringify(await actions[button.dataset.action](), null, 2); }
+        catch (error) { result.textContent = `执行失败：${error instanceof Error ? error.message : String(error)}`; }
+        finally { for (const item of buttons) item.disabled = false; }
+      });
+    }
+  </script>
+</body>
+</html>

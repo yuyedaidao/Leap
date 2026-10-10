@@ -75,8 +75,12 @@ private struct PluginResultList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let title = session.title {
+                Text(title).font(.headline).lineLimit(1).help(title)
+                    .accessibilityIdentifier("plugin.listTitle")
+            }
             if session.isLoading {
-                ProgressView("正在查询…")
+                PluginListProgress(text: "正在查询…", identifier: "plugin.queryProgress")
             } else if session.items.isEmpty, session.message == nil {
                 Text("没有结果，请输入或修改参数。")
                     .foregroundStyle(.secondary)
@@ -86,12 +90,22 @@ private struct PluginResultList: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 4) {
-                            ForEach(session.items) { item in
+                            ForEach(session.items.enumerated(), id: \.element.id) { index, item in
                                 Button { session.select(item.id) } label: {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(item.title).lineLimit(2)
-                                        if let description = item.description {
-                                            Text(description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                    HStack(spacing: 12) {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(item.title).lineLimit(2)
+                                            if let description = item.description,
+                                               !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                                Text(description).font(.caption)
+                                                    .foregroundStyle(.secondary).lineLimit(2)
+                                                    .accessibilityIdentifier("plugin.subtitle.\(item.id)")
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        if let shortcut = LauncherListShortcut.hint(at: index) {
+                                            Text(shortcut).font(.caption).foregroundStyle(.secondary)
+                                                .accessibilityIdentifier("plugin.shortcut.\(item.id)")
                                         }
                                     }
                                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -115,7 +129,9 @@ private struct PluginResultList: View {
                     }
                 }
             }
-            if session.isSelecting { ProgressView("正在执行…") }
+            if session.isSelecting {
+                PluginListProgress(text: "正在执行…", identifier: "plugin.selectionProgress")
+            }
             if let message = session.message, !message.isEmpty {
                 Text(message)
                     .foregroundStyle(session.isError ? .red : .primary)
@@ -124,6 +140,23 @@ private struct PluginResultList: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct PluginListProgress: View {
+    let text: String
+    let identifier: String
+
+    var body: some View {
+        // 分开绘制控件与文字，确保旋转控件自身居中，不受标签宽度影响。
+        VStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+                .accessibilityIdentifier(identifier + ".spinner")
+            Text(text).font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 8)
+        .accessibilityIdentifier(identifier)
     }
 }
 

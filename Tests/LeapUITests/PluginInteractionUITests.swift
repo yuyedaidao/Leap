@@ -5,6 +5,65 @@ import XCTest
 
 final class PluginInteractionUITests: XCTestCase {
     @MainActor
+    func testNumericShortcutsTitleSubtitlesAndCenteredProgress() throws {
+        let script = """
+        leap.onInputChange(async ({setList}) => {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          setList(Array.from({length:11}, (_,i) => ({id:String(i),title:'结果 '+i,
+            description:i === 0 ? '   ' : ('这是条目子标题 '+i+' ').repeat(20)})),
+            {title:'共11个结果 '+ '很长的顶部标题'.repeat(40)});
+        });
+        leap.onSelect(async ({item}) => {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return '已选择 '+item.id;
+        });
+        """
+        let app = try launch(source: "NumberEnumeration", openPlugin: true, script: script)
+        let parameter = app.textFields["plugin.parameterInput"]
+        XCTAssertTrue(parameter.waitForExistence(timeout: 5))
+        assertCenteredSpinner(app, identifier: "plugin.queryProgress.spinner")
+        let first = app.buttons["plugin.result.0"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        let title = app.staticTexts["plugin.listTitle"]
+        XCTAssertTrue(title.exists)
+        XCTAssertLessThan(title.frame.width, app.windows.firstMatch.frame.width)
+        XCTAssertLessThan(title.frame.height, 30)
+        XCTAssertTrue(first.label.contains("⌘1"))
+        XCTAssertFalse(first.label.contains("条目子标题"))
+        XCTAssertTrue(app.buttons["plugin.result.1"].label.contains("这是条目子标题 1"))
+        XCTAssertLessThan(app.buttons["plugin.result.1"].frame.height, 85)
+        // 第十项在滚动区域之外，验证快捷键由窗口处理而非行是否已挂载。
+        parameter.typeKey("0", modifierFlags: .command)
+        assertCenteredSpinner(app, identifier: "plugin.selectionProgress.spinner")
+        let selected = app.staticTexts["plugin.listFeedback"]
+        let completed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "已选择 9"), object: selected
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed)
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(app.textFields["launcher.searchField"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testDefaultSearchNumericShortcutEntersPlugin() throws {
+        let app = try launch(source: "TextConvert")
+        let search = app.textFields["launcher.searchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.click()
+        search.typeText("convert")
+        XCTAssertTrue(app.scrollViews["launcher.searchResults"].waitForExistence(timeout: 5))
+        search.typeKey("1", modifierFlags: .command)
+        XCTAssertTrue(app.textFields["plugin.parameterInput"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    private func assertCenteredSpinner(_ app: XCUIApplication, identifier: String) {
+        let spinner = app.progressIndicators[identifier]
+        XCTAssertTrue(spinner.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(spinner.frame.midX, app.windows.firstMatch.frame.midX, accuracy: 3)
+    }
+
+    @MainActor
     func testSDKCopyExitAndHide() throws {
         let previousText = NSPasteboard.general.string(forType: .string)
         defer {

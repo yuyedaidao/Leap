@@ -8,7 +8,6 @@ struct LauncherView: View {
     private let hideForSettings: () -> Void
 
     @FocusState private var isSearchFieldFocused: Bool
-    @State private var selectedSearchResultID: LauncherItem.ID?
     @State private var selectedRecentItemID: LauncherItem.ID?
 
     init(
@@ -44,7 +43,7 @@ struct LauncherView: View {
                     query: model.query,
                     searchResults: model.searchResults,
                     recentItems: model.recentItems,
-                    selectedSearchResultID: selectedSearchResultID,
+                    selectedSearchResultID: model.selectedSearchResultID,
                     selectedRecentItemID: selectedRecentItemID,
                     activate: model.activate
                 )
@@ -75,7 +74,7 @@ struct LauncherView: View {
             resetSelections()
         }
         .onChange(of: model.searchResults.map(\.id)) {
-            selectedSearchResultID = model.searchResults.first?.id
+            model.selectedSearchResultID = model.searchResults.first?.id
         }
         .onChange(of: model.recentItems.map(\.id)) {
             selectedRecentItemID = model.recentItems.first?.id
@@ -90,14 +89,14 @@ struct LauncherView: View {
     }
 
     private func resetSelections() {
-        selectedSearchResultID = model.searchResults.first?.id
+        model.selectedSearchResultID = model.searchResults.first?.id
         selectedRecentItemID = model.recentItems.first?.id
     }
 
     private func moveSearchSelection(_ offset: Int) -> Bool {
         guard hasSearchResults else { return false }
-        selectedSearchResultID = movedItemID(
-            from: selectedSearchResultID,
+        model.selectedSearchResultID = movedItemID(
+            from: model.selectedSearchResultID,
             in: model.searchResults,
             offset: offset
         )
@@ -128,7 +127,7 @@ struct LauncherView: View {
             return
         }
         let items = hasSearchResults ? model.searchResults : model.recentItems
-        let selectedID = hasSearchResults ? selectedSearchResultID : selectedRecentItemID
+        let selectedID = hasSearchResults ? model.selectedSearchResultID : selectedRecentItemID
         guard let item = items.first(where: { $0.id == selectedID }) ?? items.first else { return }
         model.activate(item)
     }
@@ -306,8 +305,9 @@ private struct LauncherSearchResults: View {
 
             ScrollView(.vertical) {
                 LazyVStack(spacing: rowSpacing) {
-                    ForEach(items) { item in
-                        SearchResultRow(item: item, isSelected: item.id == selectedItemID, activate: activate)
+                    ForEach(items.enumerated(), id: \.element.id) { index, item in
+                        SearchResultRow(item: item, isSelected: item.id == selectedItemID,
+                                        shortcut: LauncherListShortcut.hint(at: index), activate: activate)
                             .frame(height: rowHeight)
                     }
                 }
@@ -326,6 +326,7 @@ private struct LauncherSearchResults: View {
 private struct SearchResultRow: View {
     let item: LauncherItem
     let isSelected: Bool
+    let shortcut: String?
     let activate: (LauncherItem) -> Void
 
     var body: some View {
@@ -344,6 +345,10 @@ private struct SearchResultRow: View {
                         .lineLimit(1)
                 }
                 Spacer()
+                if let shortcut {
+                    Text(shortcut).font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("launcher.shortcut.\(item.id)")
+                }
             }
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, maxHeight: .infinity)

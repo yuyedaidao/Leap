@@ -16,6 +16,8 @@ final class PluginWebWindowUITests: XCTestCase {
         XCTAssertTrue(web.waitForExistence(timeout: 5))
         let initialWeb = web.frame
         XCTAssertEqual(initialWeb.width, 800, accuracy: 2)
+        XCTAssertEqual(initialWeb.height, 600, accuracy: 2)
+        XCTAssertFalse(app.buttons["plugin.closeButton"].exists)
         resize(window, by: CGVector(dx: 100, dy: 80))
         let resized = NSPredicate { _, _ in window.frame.width > initialWindow.width + 50 }
         _ = expectation(for: resized, evaluatedWith: nil)
@@ -30,7 +32,7 @@ final class PluginWebWindowUITests: XCTestCase {
         window.click()
         app.buttons["调用 Leap"].click()
         XCTAssertTrue(app.staticTexts["Web: web.echo / 来自网页"].waitForExistence(timeout: 5))
-        app.buttons["plugin.closeButton"].click()
+        window.buttons[XCUIIdentifierCloseWindow].click()
         reopenPlugin(in: app)
         XCTAssertEqual(window.frame.width, 800, accuracy: 2)
         XCTAssertEqual(window.frame.height, initialWindow.height, accuracy: 2)
@@ -39,6 +41,8 @@ final class PluginWebWindowUITests: XCTestCase {
         window.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertTrue(app.textFields["launcher.searchField"].waitForExistence(timeout: 5))
         XCTAssertFalse(window.exists)
+        XCTAssertTrue(app.staticTexts["最近使用"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "launcher.command.com.padding.leap.web-echo/web.echo").count, 1)
     }
 
     @MainActor
@@ -115,6 +119,8 @@ final class PluginWebWindowUITests: XCTestCase {
 
     @MainActor
     private func reopenPlugin(in app: XCUIApplication) {
+        // 关闭后应直接从最近使用重新打开，不能依赖搜索结果掩盖漏记历史的问题。
+        XCTAssertTrue(app.staticTexts["最近使用"].waitForExistence(timeout: 5))
         let command = app.buttons["launcher.command.com.padding.leap.web-echo/web.echo"]
         XCTAssertTrue(command.waitForExistence(timeout: 5), app.windows.debugDescription)
         // 焦点恢复会重建最近项目的 AX 元素，从稳定的窗口坐标点击，避免复用已失效的元素句柄。

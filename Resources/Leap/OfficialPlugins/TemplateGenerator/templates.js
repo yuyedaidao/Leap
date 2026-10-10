@@ -120,8 +120,8 @@ function filesFor(data) {
       data.commands.map(command => `- ${command.title}（${command.id}）：${command.interaction}，${command.executionMode}`).join('\n') +
       '\n\n直接执行和网页按钮返回 hello；列表查询返回大小写转换候选，选择后返回转换结果。网页通过 onEnter 获取当前命令，通过输入和提交事件接收顶部参数，退出时清理监听。\n\n' +
       (data.runtime === 'shell' ? '使用系统 zsh，通过 LEAP_COMMAND_ID 传递命令；后台输出不显示。\n'
-        : '宿主注入 leap；交互会话复用进程，退出即释放，动作结果直接返回字符串。日志使用 leap.log；业务回调限时 3 秒。\n') +
-      (data.withUI ? '\n网页内嵌宽度跟随宿主，height 包含宿主操作栏并按屏幕裁剪；width 用于独立窗口兼容。\n' : '') +
+        : '宿主注入 leap；交互会话复用进程，退出即释放，动作结果直接返回字符串。日志使用 leap.log；业务回调限时 3 秒，宿主调用等待另计，每个事件累计最多 60 秒。\n') +
+      (data.withUI ? '\n当前生成器创建内嵌网页，宽度跟随启动器；默认宽度仅用于独立窗口。内嵌网页默认高度包含宿主操作栏；独立窗口默认高度为网页内容高度，不包含系统标题栏。尺寸按可用屏幕裁剪。独立窗口可拖动调整大小，重新打开恢复默认尺寸。要使用独立窗口，手动省略网页命令的 mode、presentation、input，同时保留 webEntry 和 webWindow。\n' : '') +
       (data.includeIcon ? '\n可替换 icon.png 为自己的 PNG 图标。\n' : '') +
       '\n匹配规则以宿主 NSRegularExpression 为准，生成前使用 macOS Foundation 校验；修改规则后仍需通过安装校验。修改源文件后重新安装；持久数据不要放在受管副本。\n',
   };

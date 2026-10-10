@@ -47,7 +47,8 @@ public struct PluginListItem: Codable, Identifiable, Equatable, Sendable {
                   let id = fields["id"]?.string, !id.isEmpty,
                   let title = fields["title"]?.string, !title.isEmpty,
                   identifiers.insert(id).inserted,
-                  fields["description"] == nil || fields["description"] == .null || fields["description"]?.string != nil else {
+                  fields["description"] == nil || fields["description"] == .null ||
+                    fields["description"]?.string != nil else {
                 throw ListError.invalidResult
             }
             return Self(id: id, title: title, description: fields["description"]?.string)
@@ -60,13 +61,35 @@ public struct PluginListItem: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
+/// 标题和条目属于同一查询快照，避免分批发布时串到另一批结果。
+public struct PluginListSnapshot: Equatable, Sendable {
+    public let items: [PluginListItem]
+    public let title: String?
+
+    public init(items: [PluginListItem], title: String? = nil) {
+        self.items = items
+        self.title = title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? title : nil
+    }
+
+    public static func decode(_ value: PluginValue) throws -> Self {
+        if case .array = value { return Self(items: try PluginListItem.decode(value)) }
+        guard case let .object(fields) = value, let items = fields["items"],
+              fields["title"] == nil || fields["title"]?.string != nil else {
+            throw PluginListItem.ListError.invalidResult
+        }
+        return Self(items: try PluginListItem.decode(items), title: fields["title"]?.string)
+    }
+}
+
 @MainActor
 @Observable
 public final class PluginListSession {
     @MainActor private final class QueryDelivery { var finished = false }
     public typealias Call = @Sendable (String, String, String?, PluginInvocationCancellation,
                                       @escaping PluginProcessSession.ListUpdate) async throws -> PluginValue
-    public private(set) var items: [PluginListItem] = []
+    public private(set) var snapshot = PluginListSnapshot(items: [])
+    public var items: [PluginListItem] { snapshot.items }
+    public var title: String? { snapshot.title }
     public private(set) var selectedID: String?
     public private(set) var isLoading = false
     public private(set) var isSelecting = false
@@ -123,8 +146,9 @@ public final class PluginListSession {
         cancellation = token
         Task { [weak self, call] in
             let response: Result<String, Error>
-            do { response = .success(try await call("select", query, item.id, token, { _ in }).string ?? "") }
-            catch { response = .failure(error) }
+            do { response = .success(try await call("select", query, item.id, token, { _ in }).string ?? "") } catch {
+                response = .failure(error)
+            }
             guard let self, isActive else { return }
             isSelecting = false
             if version == revision { display(response) }
@@ -132,12 +156,20 @@ public final class PluginListSession {
         }
     }
 
+    @discardableResult
+    public func select(at index: Int, isRepeat: Bool = false) -> Bool {
+        guard isActive, (0..<10).contains(index), items.indices.contains(index) else { return false }
+        // 加载时仍消费有效数字键，但不排队执行旧条目。
+        if !isRepeat { select(items[index].id) }
+        return true
+    }
+
     public func close() {
         isActive = false
         revision &+= 1
         debounceTask?.cancel()
         cancellation?.cancel()
-        items = []
+        snapshot = PluginListSnapshot(items: [])
         selectedID = nil
     }
 
@@ -150,19 +182,17 @@ public final class PluginListSession {
         let token = PluginInvocationCancellation()
         cancellation = token
         Task { [weak self, call] in
-            let response: Result<[PluginListItem], Error>
+            let response: Result<PluginListSnapshot, Error>
             let session = self
             let delivery = QueryDelivery()
             do {
                 let result = try await call("input", query, nil, token) { values in
                     Task { @MainActor [weak self = session] in
                         guard let self, !delivery.finished, self.isActive, self.revision == version else { return }
-                        let previous = self.selectedID
-                        self.items = values
-                        self.selectedID = values.contains(where: { $0.id == previous }) ? previous : values.first?.id
+                        self.apply(values)
                     }
                 }
-                response = .success(try PluginListItem.decode(result))
+                response = .success(try PluginListSnapshot.decode(result))
             } catch { response = .failure(error) }
             delivery.finished = true
             guard let self, isActive else { return }
@@ -173,15 +203,19 @@ public final class PluginListSession {
                 switch response {
                 case let .success(values):
                     // 最终快照与加载完成一起发布；迟到的分批更新不能把最终结果改回旧批次。
-                    let previous = selectedID
-                    items = values
-                    selectedID = values.contains(where: { $0.id == previous }) ? previous : values.first?.id
+                    apply(values)
                 case let .failure(error):
                     display(.failure(error))
                 }
             }
             startQueryIfReady()
         }
+    }
+
+    private func apply(_ value: PluginListSnapshot) {
+        let previous = selectedID
+        snapshot = value
+        selectedID = items.contains(where: { $0.id == previous }) ? previous : items.first?.id
     }
 
     private func display(_ response: Result<String, Error>) {

@@ -13,8 +13,9 @@ test('余数决定条目数，枚举从零开始且不包含余数', async t => 
     const result = await plugin.call('input', query);
     assert.equal(result.error, undefined);
     assert.deepEqual(result.items, Array.from({ length }, (_, index) => ({
-      id: String(index), title: `标题 ${index}`,
+      id: String(index), title: `标题 ${index}`, description: `输入：${query.trim() || '0'}`,
     })));
+    assert.equal(result.value.title, `共${length}个结果`);
   }
 });
 

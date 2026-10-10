@@ -1,4 +1,5 @@
 """Python 使用相同会话消息；读线程独立处理取消和宿主回复，不阻塞业务线程。"""
+import base64
 import json
 import queue
 import runpy
@@ -22,14 +23,17 @@ handlers = {}
 lifecycle = {"enter": [], "exit": []}
 active = True
 latest_items = []
+latest_snapshot = []
 latest_text = ""
 sequence = 0
+event_context = threading.local()
+expired_replies = set()
 
 
 def send(message):
     data = json.dumps({"protocol": 1, **message}, ensure_ascii=False) + "\n"
-    if len(data.encode("utf-8")) > 1024 * 1024:
-        raise ValueError("插件消息超过 1MB。")
+    if len(data.encode("utf-8")) > 24 * 1024 * 1024:
+        raise ValueError("插件消息超过 24MB。")
     with write_lock:
         output.write(data)
         output.flush()
@@ -51,15 +55,23 @@ def host_call(method, params=None):
     global sequence
     if not active:
         raise ValueError("插件会话已退出。")
+    if not hasattr(event_context, "identity") or event_context.signal.is_set():
+        raise ValueError("插件输入已取消。")
     with state_lock:
         sequence += 1
         identity = f"host-{sequence}"
         reply = {"event": threading.Event()}
         replies[identity] = reply
     try:
-        send({"type": "call", "id": identity, "method": method, "params": params or {}})
-        if not reply["event"].wait(3):
-            raise ValueError("宿主调用超时。")
+        send({"type": "call", "id": identity, "method": method, "parentID": event_context.identity, "params": params or {}})
+        import time
+        deadline = time.monotonic() + 60
+        while not reply["event"].wait(0.05):
+            if event_context.signal.is_set() or time.monotonic() >= deadline:
+                with state_lock:
+                    expired_replies.add(identity)
+                send({"type": "hostCancel", "id": identity})
+                raise ValueError("插件输入已取消。" if event_context.signal.is_set() else "宿主调用超时。")
         response = reply["message"]
         if "error" in response:
             raise ValueError(response["error"])
@@ -75,19 +87,172 @@ leap = SimpleNamespace(
     onSelect=lambda callback: subscribe("select", callback),
     onInvoke=lambda callback: subscribe("invoke", callback),
     onExit=lambda callback: subscribe("exit", callback),
-    copyText=lambda text: host_call("copyText", {"text": text}),
     outPlugin=lambda: host_call("outPlugin"),
     hideMainWindow=lambda: host_call("hideMainWindow"),
     log=lambda *values: print(*values, file=sys.stderr),
 )
 
 
+def single_host(method, field, value):
+    if field == "image":
+        if isinstance(value, (bytes, bytearray)):
+            if not value or len(value) > 16 * 1024 * 1024:
+                raise ValueError("图片必须为 1 字节至 16MB。")
+            value = "data:application/octet-stream;base64," + base64.b64encode(value).decode("ascii")
+        elif not isinstance(value, str) or not value:
+            raise ValueError("图片必须为路径、Data URL 或 bytes。")
+    elif field == "filePath" and method.endswith("File"):
+        if not isinstance(value, (str, list)) or (isinstance(value, list) and (not value or any(not isinstance(path, str) or not path for path in value))):
+            raise ValueError("文件路径必须为字符串或非空路径数组。")
+    elif not isinstance(value, str):
+        raise ValueError("参数必须为字符串。")
+    return host_call(method, {field: value})
+
+
+def notification(body, clickFeatureCode=None):
+    if not isinstance(body, str) or not body or (clickFeatureCode is not None and not isinstance(clickFeatureCode, str)):
+        raise ValueError("通知正文及命令 ID 必须为字符串。")
+    return host_call("showNotification", {"body": body, **({"clickFeatureCode": clickFeatureCode} if clickFeatureCode is not None else {})})
+
+
+def keyboard(key, *modifiers):
+    if not isinstance(key, str) or not key or any(not isinstance(value, str) for value in modifiers):
+        raise ValueError("按键和修饰键必须为字符串。")
+    return host_call("simulateKeyboardTap", {"key": key, "modifiers": list(modifiers)})
+
+
+def copyText(text):
+    return single_host("copyText", "text", text)
+
+
+def copyFile(filePath):
+    return single_host("copyFile", "filePath", filePath)
+
+
+def copyImage(image):
+    return single_host("copyImage", "image", image)
+
+
+def hideMainWindowPasteText(text):
+    return single_host("hideMainWindowPasteText", "text", text)
+
+
+def hideMainWindowPasteFile(filePath):
+    return single_host("hideMainWindowPasteFile", "filePath", filePath)
+
+
+def hideMainWindowPasteImage(image):
+    return single_host("hideMainWindowPasteImage", "image", image)
+
+
+def hideMainWindowTypeString(text):
+    return single_host("hideMainWindowTypeString", "text", text)
+
+
+def shellOpenPath(fullPath):
+    return single_host("shellOpenPath", "fullPath", fullPath)
+
+
+def shellTrashItem(fullPath):
+    return single_host("shellTrashItem", "fullPath", fullPath)
+
+
+def shellShowItemInFolder(fullPath):
+    return single_host("shellShowItemInFolder", "fullPath", fullPath)
+
+
+def shellOpenExternal(url):
+    return single_host("shellOpenExternal", "url", url)
+
+
+def getPath(name):
+    return single_host("getPath", "name", name)
+
+
+def getFileIcon(filePath):
+    return single_host("getFileIcon", "filePath", filePath)
+
+
+def getCopyedFiles():
+    return host_call("getCopyedFiles")
+
+
+def shellBeep():
+    return host_call("shellBeep")
+
+
+def getNativeId():
+    return host_call("getNativeId")
+
+
+def getAppName():
+    return host_call("getAppName")
+
+
+def getAppVersion():
+    return host_call("getAppVersion")
+
+
+def readCurrentFolderPath():
+    return host_call("readCurrentFolderPath")
+
+
+def readCurrentBrowserUrl():
+    return host_call("readCurrentBrowserUrl")
+
+
+def isDev():
+    return host_call("isDev")
+
+
+def isMacOS():
+    return host_call("isMacOS")
+
+
+def isWindows():
+    return host_call("isWindows")
+
+
+def isLinux():
+    return host_call("isLinux")
+
+
+leap.copyText = copyText
+leap.copyFile = copyFile
+leap.copyImage = copyImage
+leap.hideMainWindowPasteText = hideMainWindowPasteText
+leap.hideMainWindowPasteFile = hideMainWindowPasteFile
+leap.hideMainWindowPasteImage = hideMainWindowPasteImage
+leap.hideMainWindowTypeString = hideMainWindowTypeString
+leap.shellOpenPath = shellOpenPath
+leap.shellTrashItem = shellTrashItem
+leap.shellShowItemInFolder = shellShowItemInFolder
+leap.shellOpenExternal = shellOpenExternal
+leap.getPath = getPath
+leap.getFileIcon = getFileIcon
+leap.getCopyedFiles = getCopyedFiles
+leap.shellBeep = shellBeep
+leap.getNativeId = getNativeId
+leap.getAppName = getAppName
+leap.getAppVersion = getAppVersion
+leap.readCurrentFolderPath = readCurrentFolderPath
+leap.readCurrentBrowserUrl = readCurrentBrowserUrl
+leap.isDev = isDev
+leap.isMacOS = isMacOS
+leap.isWindows = isWindows
+leap.isLinux = isLinux
+leap.showNotification = notification
+leap.simulateKeyboardTap = keyboard
+
+
 def handle(message):
-    global active, latest_items, latest_text
+    global active, latest_items, latest_snapshot, latest_text
     identity = message["id"]
     method = message.get("method")
     params = message.get("params")
     signal = tasks[identity]
+    event_context.identity = identity
+    event_context.signal = signal
     live = True
     published = False
     try:
@@ -107,10 +272,11 @@ def handle(message):
         elif method == "input":
             latest_text = params["query"]
             latest_items = []
+            latest_snapshot = []
 
-            def set_list(items):
+            def set_list(items, options=None):
                 nonlocal published
-                global latest_items
+                global latest_items, latest_snapshot
                 if not live or not active or signal.is_set():
                     return
                 if not isinstance(items, list) or len(items) > 100:
@@ -122,9 +288,14 @@ def handle(message):
                 if len({item["id"] for item in items}) != len(items):
                     raise ValueError("条目 ID 重复。")
                 # 与 JS 保持一致：缓存协议字段副本，业务对象后续修改不能改变已发布条目。
-                snapshot = [{key: item[key] for key in ("id", "title", "description") if key in item} for item in items]
+                if options is not None and (not isinstance(options, dict)
+                                           or ("title" in options and not isinstance(options["title"], str))):
+                    raise ValueError("列表选项必须为对象，顶部标题必须为字符串。")
+                entries = [{key: item[key] for key in ("id", "title", "description") if key in item} for item in items]
+                snapshot = {"items": entries, "title": options["title"]} if options is not None and "title" in options else entries
                 send({"type": "list", "id": identity, "value": snapshot})
-                latest_items = snapshot
+                latest_items = entries
+                latest_snapshot = snapshot
                 published = True
 
             callback = handlers.get("input")
@@ -132,7 +303,7 @@ def handle(message):
                 callback({"commandID": params["commandID"], "text": params["query"], "setList": set_list, "signal": signal})
             if not published:
                 set_list([])
-            value = latest_items
+            value = latest_snapshot
         elif method == "select":
             item = next((item for item in latest_items if item["id"] == params.get("itemID")), None)
             if item is None or params["query"] != latest_text:
@@ -168,10 +339,10 @@ runpy.run_path(sys.argv[1], init_globals={"leap": leap}, run_name="__main__")
 threading.Thread(target=worker, daemon=True).start()
 send({"type": "ready", "id": "ready", "value": None})
 while True:
-    line = sys.stdin.buffer.readline(1024 * 1024 + 1)
+    line = sys.stdin.buffer.readline(24 * 1024 * 1024 + 1)
     if not line:
         break
-    if len(line) > 1024 * 1024 or not line.endswith(b"\n"):
+    if len(line) > 24 * 1024 * 1024 or not line.endswith(b"\n"):
         raise ValueError("输入消息超过限制或缺少换行。")
     message = json.loads(line)
     if message.get("protocol") != 1 or not isinstance(message.get("id"), str):
@@ -188,6 +359,9 @@ while True:
     elif message["type"] == "result":
         with state_lock:
             reply = replies.get(identity)
+            if reply is None and identity in expired_replies:
+                expired_replies.remove(identity)
+                continue
             if reply is None:
                 raise ValueError("宿主响应标识无效。")
             reply["message"] = message

@@ -13,6 +13,11 @@ final class PluginInteractionSession: Identifiable {
     let previousSearch: String
     private(set) var list: PluginListSession?
     private var script: PluginScriptSession?
+    private let hostAPI: PluginHostAPI?
+    private let targetPID: Int32?
+    private let inputWindowVisibility: ((Bool) -> Void)?
+    private var webHostTasks: [String: Task<PluginValue, any Error>] = [:]
+
     private var startupError: String?
     var errorMessage: String? {
         startupError ?? (list == nil && inputCoordinator?.isError == true ? inputCoordinator?.message : nil)
@@ -27,8 +32,12 @@ final class PluginInteractionSession: Identifiable {
 
     init(
         command: PluginCommandDescriptor, configuration: PluginManifest.Command,
-        previousSearch: String, initialInput: String, executor: PluginScriptExecutor?
+        previousSearch: String, initialInput: String, executor: PluginScriptExecutor?,
+        hostAPI: PluginHostAPI? = nil, targetPID: Int32? = nil, inputWindowVisibility: ((Bool) -> Void)? = nil
     ) {
+        self.hostAPI = hostAPI
+        self.targetPID = targetPID
+        self.inputWindowVisibility = inputWindowVisibility
         self.command = command
         self.configuration = configuration
         self.previousSearch = previousSearch
@@ -75,6 +84,8 @@ final class PluginInteractionSession: Identifiable {
     func close() {
         guard isActive else { return }
         isActive = false
+        for task in webHostTasks.values { task.cancel() }
+        webHostTasks.removeAll()
         list?.close()
         inputCoordinator?.close()
         script?.close()
@@ -91,20 +102,30 @@ final class PluginInteractionSession: Identifiable {
         } catch { return .failure(error.localizedDescription) }
     }
 
-    func handleHostCall(_ method: String, params: PluginValue) throws -> PluginValue {
-        guard isActive else { throw PluginSessionError.closed }
-        switch method {
-        case "copyText":
-            guard let text = params["text"]?.string else { throw PluginSessionError.invalidMessage }
-            NSPasteboard.general.clearContents()
-            guard NSPasteboard.general.setString(text, forType: .string) else {
-                throw PluginSessionError.plugin("复制文本失败。")
-            }
-        case "outPlugin", "hideMainWindow": break
-        default: throw PluginSessionError.plugin("未知宿主接口。")
-        }
-        return .bool(true)
+    func handleHostCall(_ method: String, params: PluginValue) async throws -> PluginValue {
+        guard isActive, let hostAPI else { throw PluginSessionError.closed }
+        return try await hostAPI.handle(method, params: params, context: .init(
+            pluginID: command.pluginID, commandIDs: Set(command.manifest.commands.map(\.id)), targetPID: targetPID,
+            isActive: { [weak self] in self?.isActive == true },
+            setWindowHidden: { [weak self] hidden in self?.inputWindowVisibility?(hidden) }
+        ))
     }
+
+    func startWebHostCall(_ method: String, params: PluginValue, callID: String) throws -> Task<PluginValue, any Error> {
+        guard isActive, webHostTasks.count < 16, webHostTasks[callID] == nil else { throw PluginSessionError.closed }
+        // 同步登记，取消消息即使早于异步执行到达也能找到任务。
+        let task = Task {
+            let value = try await self.handleHostCall(method, params: params)
+            if Task.isCancelled { throw PluginSessionError.cancelled }
+            return value
+        }
+        webHostTasks[callID] = task
+        return task
+    }
+
+    func cancelWebHostCall(_ callID: String) { webHostTasks[callID]?.cancel() }
+
+    func finishWebHostCall(_ callID: String) { webHostTasks[callID] = nil }
 
     enum SessionError: LocalizedError {
         case runtimeUnavailable

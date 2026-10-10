@@ -5,9 +5,9 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 test('真实注入脚本支持迟订阅、输入/提交/退出和移除监听', async () => {
-  const script = fs.readFileSync('Resources/Leap/PluginSDK/web.js', 'utf8');
+  const script = fs.readFileSync('Resources/Leap/PluginSDK/host-api.js', 'utf8') + '\n' + fs.readFileSync('Resources/Leap/PluginSDK/web.js', 'utf8');
   const context = { window: { __leapContext: { commandID: 'web.run', query: 'initial' } },
-    queueMicrotask, console, AbortController };
+    queueMicrotask, console, AbortController, setTimeout, clearTimeout };
   vm.runInNewContext(script, context);
   const bridge = context.window.leap;
   assert.ok(Object.isFrozen(bridge));

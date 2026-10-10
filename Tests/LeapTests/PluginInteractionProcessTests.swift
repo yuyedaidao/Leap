@@ -4,12 +4,28 @@ import Testing
 @testable import LeapCore
 
 struct PluginInteractionProcessTests {
+    @Test("真实 SDK 标题与子标题经进程桥接同步到宿主")
+    func titledListBridge() async throws {
+        let (process, directory) = try session(script: """
+        leap.onInputChange(({setList}) => setList([
+          {id:'one',title:'结果',description:'济南市'}
+        ], {title:'共1个结果'}));
+        """)
+        defer { process.close(); try? FileManager.default.removeItem(at: directory) }
+        _ = try await process.request("enter", commandID: "test", query: "")
+        let updates = TestListUpdates()
+        let value = try await process.request("input", commandID: "test", query: "", onList: updates.update)
+        let result = try PluginListSnapshot.decode(value)
+        #expect(updates.title == "共1个结果" && result.title == updates.title)
+        #expect(result.items.first?.description == "济南市")
+    }
+
     private var root: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
     }
 
-    private func session(script: String, hostCall: @escaping PluginProcessSession.HostCall = { _, _ in .bool(true) }) throws
+    private func session(script: String, hostWaitTimeout: TimeInterval = 60, hostCall: @escaping PluginProcessSession.HostCall = { _, _ in .bool(true) }) throws
         -> (PluginProcessSession, URL) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("LeapSDK-\(UUID())")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -18,7 +34,7 @@ struct PluginInteractionProcessTests {
         return (PluginProcessSession(
             executable: root.appendingPathComponent("Resources/Leap/Runtimes/node-24.21.0/bin/node"),
             arguments: [root.appendingPathComponent("Resources/Leap/PluginSDK/bootstrap.cjs").path, entry.path],
-            hostCall: hostCall
+            hostCall: hostCall, hostWaitTimeout: hostWaitTimeout
         ), directory)
     }
 
@@ -92,7 +108,7 @@ struct PluginInteractionProcessTests {
         let (process, directory) = try session(script: "leap.onInvoke(() => 'ok');")
         defer { process.close(); try? FileManager.default.removeItem(at: directory) }
         await #expect(throws: PluginSessionError.messageTooLarge) {
-            try await process.request("enter", commandID: "test", query: String(repeating: "x", count: 1100000))
+            try await process.request("enter", commandID: "test", query: String(repeating: "x", count: 25 * 1024 * 1024))
         }
     }
 
@@ -117,10 +133,10 @@ struct PluginInteractionProcessTests {
         await #expect(throws: PluginSessionError.invalidMessage) {
             try await invalid.request("enter", commandID: "test", query: "")
         }
-        let (large, directory) = try session(script: "leap.onInvoke(() => 'x'.repeat(1100000));")
+        let (large, directory) = try session(script: "leap.onInvoke(() => 'x'.repeat(25 * 1024 * 1024));")
         defer { large.close(); try? FileManager.default.removeItem(at: directory) }
         _ = try await large.request("enter", commandID: "test", query: "")
-        await #expect(throws: PluginSessionError.plugin("插件消息超过 1MB。")) {
+        await #expect(throws: PluginSessionError.plugin("插件消息超过 24MB。")) {
             try await large.request("invoke", commandID: "test", query: "")
         }
     }
@@ -137,4 +153,55 @@ struct PluginInteractionProcessTests {
             try await process.request("invoke", commandID: "test", query: "")
         }
     }
+    @Test("宿主等待不占用业务期限，完成后恢复剩余业务额度")
+    func hostWaitBudget() async throws {
+        let (process, directory) = try session(script: """
+        leap.onInvoke(async ({ query }) => {
+          await leap.getAppName();
+          if (query === 'slow') await new Promise(resolve => setTimeout(resolve, 300));
+          return 'ok';
+        });
+        """, hostCall: { _, _ in
+            try await Task.sleep(for: .milliseconds(3100))
+            return .string("Leap")
+        })
+        defer { process.close(); try? FileManager.default.removeItem(at: directory) }
+        _ = try await process.request("enter", commandID: "test", query: "")
+        #expect(try await process.request("invoke", commandID: "test", query: "", timeout: 0.2).string == "ok")
+        await #expect(throws: PluginSessionError.timedOut) {
+            try await process.request("invoke", commandID: "test", query: "slow", timeout: 0.2)
+        }
+    }
+
+    @Test("宿主累计等待上限终止任务，过期输入取消宿主操作")
+    func hostWaitLimitAndCancellation() async throws {
+        let marker = PluginInvocationCancellation()
+        let (process, directory) = try session(script: "leap.onInvoke(async () => String(await leap.getAppName()));",
+                                             hostWaitTimeout: 0.1, hostCall: { _, _ in
+            do { try await Task.sleep(for: .seconds(10)); return .string("不应返回") }
+            catch { marker.cancel(); throw error }
+        })
+        defer { process.close(); try? FileManager.default.removeItem(at: directory) }
+        _ = try await process.request("enter", commandID: "test", query: "")
+        await #expect(throws: PluginSessionError.timedOut) {
+            try await process.request("invoke", commandID: "test", query: "")
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(marker.isCancelled)
+        let cancelled = PluginInvocationCancellation()
+        let stopped = PluginInvocationCancellation()
+        let (second, secondDirectory) = try session(script: "leap.onInputChange(async () => { await leap.getAppName(); });",
+                                                   hostCall: { _, _ in
+            do { try await Task.sleep(for: .seconds(10)); return .string("不应返回") }
+            catch { stopped.cancel(); throw error }
+        })
+        defer { second.close(); try? FileManager.default.removeItem(at: secondDirectory) }
+        _ = try await second.request("enter", commandID: "test", query: "")
+        let task = Task { try await second.request("input", commandID: "test", query: "", cancellation: cancelled) }
+        try await Task.sleep(for: .milliseconds(50))
+        cancelled.cancel()
+        await #expect(throws: PluginSessionError.cancelled) { try await task.value }
+        #expect(stopped.isCancelled)
+    }
+
 }

@@ -30,6 +30,7 @@ let project = Project(
                 "CFBundleDisplayName": "Leap",
                 "CFBundleShortVersionString": "1.2.0",
                 "CFBundleVersion": "3",
+                "NSAppleEventsUsageDescription": "Leap 插件可在你调用时读取 Finder 目录或浏览器当前标签页。",
             ]),
             sources: ["Sources/Leap/**"],
             resources: [

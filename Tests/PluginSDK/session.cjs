@@ -34,7 +34,11 @@ function session(entry, commandID, runtime = 'javascript', hostCall = async () =
     }
     const call = pending.get(message.id);
     if (!call) return;
-    if (message.type === 'list') { call.items = message.value; call.updates.push(message.value); return; }
+    if (message.type === 'list') {
+      call.items = Array.isArray(message.value) ? message.value : message.value.items;
+      call.updates.push(message.value);
+      return;
+    }
     clearTimeout(call.timer);
     pending.delete(message.id);
     call.resolve({ ...message, items: call.items, updates: call.updates });

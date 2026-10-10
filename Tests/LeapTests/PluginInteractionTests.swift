@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import LeapCore
@@ -87,6 +88,94 @@ struct PluginInteractionManifestTests {
 
 @MainActor
 struct PluginListSessionTests {
+    @Test("数字快捷键映射与修饰键边界")
+    func shortcutMapping() {
+        for (index, character) in "1234567890".enumerated() {
+            #expect(LauncherListShortcut.index(for: String(character), modifiers: .command) == index)
+            #expect(LauncherListShortcut.hint(at: index) == "⌘\(character)")
+        }
+        for key in ["", "a", "10", "１"] {
+            #expect(LauncherListShortcut.index(for: key, modifiers: .command) == nil)
+        }
+        for flags: NSEvent.ModifierFlags in [[], .shift, [.command, .shift], [.command, .option],
+                                             [.command, .control]] {
+            #expect(LauncherListShortcut.index(for: "1", modifiers: flags) == nil)
+        }
+        #expect(LauncherListShortcut.index(for: "1", modifiers: [.command, .capsLock, .numericPad]) == 0)
+        #expect(LauncherListShortcut.hint(at: -1) == nil)
+        #expect(LauncherListShortcut.hint(at: 10) == nil)
+    }
+
+    @Test("旧列表与带标题快照校验，空白标题隐藏")
+    func snapshotValidation() throws {
+        func decode(_ text: String) throws -> PluginListSnapshot {
+            try PluginListSnapshot.decode(JSONDecoder().decode(PluginValue.self, from: Data(text.utf8)))
+        }
+        #expect(try decode("[]").title == nil)
+        #expect(try decode(#"{"items":[],"title":"共0个结果"}"#).title == "共0个结果")
+        #expect(try decode(#"{"items":[],"title":"  \n "}"#).title == nil)
+        for value in [#"{"items":[],"title":1}"#, #"{"items":[],"title":null}"#,
+                      #"{"title":"missing"}"#, #"{"items":"invalid"}"#] {
+            #expect(throws: (any Error).self) { try decode(value) }
+        }
+    }
+
+    @Test("数字执行第十项、忙碌及自动重复不执行，越界和关闭失效")
+    func numericSelection() async throws {
+        let probe = ListCallProbe()
+        let entries = (0..<11).map { PluginListItem(id: String($0), title: "结果") }
+        let value = try JSONDecoder().decode(PluginValue.self, from: JSONEncoder().encode(entries))
+        let session = PluginListSession(debounce: .zero) { method, query, itemID, token, update in
+            if method == "input" {
+                try await Task.sleep(for: .milliseconds(30))
+                return value
+            }
+            return try await probe.call(method: method, query: query, itemID: itemID,
+                                        cancellation: token, update: update)
+        }
+        session.updateInput("query")
+        #expect(!session.select(at: 0))
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(!session.select(at: -1))
+        #expect(!session.select(at: 10))
+        #expect(session.select(at: 9, isRepeat: true))
+        #expect(!session.isSelecting)
+        #expect(session.select(at: 9))
+        #expect(session.selectedID == "9")
+        #expect(session.select(at: 0))
+        try await Task.sleep(for: .milliseconds(90))
+        #expect(await probe.selections == ["9"])
+        session.updateInput("next")
+        #expect(session.select(at: 0))
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(await probe.selections == ["9"])
+        session.close()
+        #expect(!session.select(at: 0))
+    }
+
+    @Test("标题与条目同步发布，新输入等待保留旧快照，迟到批次不会覆盖")
+    func titledSnapshots() async throws {
+        let session = PluginListSession(debounce: .zero) { _, query, _, _, update in
+            try await Task.sleep(for: .milliseconds(30))
+            let items = [PluginListItem(id: query, title: query, description: "子标题")]
+            update(.init(items: items, title: "分批标题"))
+            let item: PluginValue = .object(["id": .string(query), "title": .string(query),
+                                            "description": .string("子标题")])
+            return .object(["items": .array([item]), "title": .string(query)])
+        }
+        session.updateInput("first")
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(session.title == "first" && session.items.first?.id == "first")
+        session.updateInput("stale")
+        try await Task.sleep(for: .milliseconds(10))
+        session.updateInput("latest")
+        #expect(session.title == "first" && session.isLoading)
+        try await Task.sleep(for: .milliseconds(90))
+        #expect(session.title == "latest" && session.items.first?.id == "latest")
+        session.close()
+        #expect(session.title == nil)
+    }
+
     @Test("防抖只查询最新输入，并发有界且旧响应不覆盖")
     func debounceAndStaleResponses() async throws {
         let probe = ListCallProbe()
@@ -142,7 +231,7 @@ struct PluginListSessionTests {
     func errorRecovery() async throws {
         let session = PluginListSession(debounce: .zero) { _, query, _, _, update in
             if query == "bad" { throw PluginListItem.ListError.invalidResult }
-            update([PluginListItem(id: "ok", title: "恢复")])
+            update(.init(items: [PluginListItem(id: "ok", title: "恢复")]))
             return .array([.object(["id": .string("ok"), "title": .string("恢复")])])
         }
         session.updateInput("bad")
@@ -157,13 +246,16 @@ struct PluginListSessionTests {
     @Test("最终列表与加载完成同时发布，迟到的分批更新不能覆盖")
     func finalSnapshot() async throws {
         let session = PluginListSession(debounce: .zero) { _, _, _, _, update in
-            for index in 0..<100 { update([PluginListItem(id: "partial", title: String(index))]) }
+            for index in 0..<100 {
+                update(.init(items: [PluginListItem(id: "partial", title: String(index))], title: "过期标题"))
+            }
             return .array([.object(["id": .string("final"), "title": .string("完成")])])
         }
         session.updateInput("query")
         try await Task.sleep(for: .milliseconds(50))
         #expect(!session.isLoading && session.items.first?.id == "final")
         #expect(session.selectedID == "final")
+        #expect(session.title == nil)
         session.close()
     }
 }
@@ -182,7 +274,7 @@ private actor ListCallProbe {
         // 故意不响应取消，检验宿主自己的过期版本隔离，而不是只依赖插件配合。
         try await Task.sleep(for: .milliseconds(60))
         if method == "select" { return .string("selected \(query)") }
-        update([PluginListItem(id: "result", title: query)])
+        update(.init(items: [PluginListItem(id: "result", title: query)]))
         return .array([.object(["id": .string("result"), "title": .string(query)])])
     }
 }

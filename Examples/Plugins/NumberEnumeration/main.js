@@ -9,7 +9,7 @@ leap.onInputChange(({ text, setList }) => {
   let remainder = 0;
   for (const digit of value) { remainder = (remainder + Number(digit)) % 10; }
   setList(Array.from({ length: remainder }, (_, index) => ({
-    id: String(index), title: `标题 ${index}`,
-  })));
+    id: String(index), title: `标题 ${index}`, description: `输入：${value || '0'}`,
+  })), { title: `共${remainder}个结果` });
 });
 leap.onSelect(({ item }) => `已选择：${item.title}`);

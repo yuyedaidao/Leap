@@ -1,0 +1,13 @@
+{
+  "id": "com.example.leap.standalone-window",
+  "name": "独立窗口示例",
+  "version": "1.0.0",
+  "minimumHostVersion": "1.2.0",
+  "runtime": "javascript",
+  "entry": "main.js",
+  "webEntry": "index.html",
+  "webWindow": { "width": 800, "height": 600 },
+  "commands": [
+    { "id": "standalone-window.run", "title": "独立窗口示例" }
+  ]
+}

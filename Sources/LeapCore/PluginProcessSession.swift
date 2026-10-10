@@ -10,7 +10,7 @@ public enum PluginSessionError: LocalizedError, Equatable {
         case .closed: "插件会话已关闭，请退出后重新进入。"
         case .timedOut: "插件响应超时，请退出后重新进入。"
         case .invalidMessage: "插件通信消息无效。"
-        case .messageTooLarge: "插件消息超过 1MB。"
+        case .messageTooLarge: "插件消息超过 24MB。"
         case .cancelled: "插件输入已取消。"
         case let .plugin(message): "插件执行失败：\(message)"
         }
@@ -22,12 +22,13 @@ private struct PluginMessage: Codable, Sendable {
     let type: String
     let id: String
     var method: String?
+    var parentID: String?
     var params: PluginValue?
     var value: PluginValue?
     var error: String?
     enum CodingKeys: String, CodingKey {
         case protocolVersion = "protocol"
-        case type, id, method, params, value, error
+        case type, id, method, parentID, params, value, error
     }
 }
 
@@ -38,6 +39,7 @@ extension PluginMessage {
         type = try container.decode(String.self, forKey: .type)
         id = try container.decode(String.self, forKey: .id)
         method = try container.decodeIfPresent(String.self, forKey: .method)
+        parentID = try container.decodeIfPresent(String.self, forKey: .parentID)
         params = try container.decodeIfPresent(PluginValue.self, forKey: .params)
         // null 是合法的无反馈结果，必须区分“值为 null”和“缺少 value 字段”。
         value = container.contains(.value) ? try container.decode(PluginValue.self, forKey: .value) : nil
@@ -48,11 +50,15 @@ extension PluginMessage {
 /// 所有可变状态限定在队列内；文件句柄回调只投递数据，不在主线程阻塞读写。
 public final class PluginProcessSession: @unchecked Sendable {
     public typealias HostCall = @Sendable (String, PluginValue) async throws -> PluginValue
-    public typealias ListUpdate = @Sendable ([PluginListItem]) -> Void
+    public typealias ListUpdate = @Sendable (PluginListSnapshot) -> Void
     private struct Pending {
         let message: PluginMessage
         let continuation: CheckedContinuation<PluginValue, any Error>
-        let deadline: DispatchWorkItem
+        var deadline: DispatchWorkItem
+        var remaining: TimeInterval
+        var hostRemaining: TimeInterval = 60
+        var clockStart = ProcessInfo.processInfo.systemUptime
+        var waitingForHost = false
         let cancellation: PluginInvocationCancellation?
         let observation: UUID?
         let listUpdate: ListUpdate?
@@ -92,11 +98,13 @@ public final class PluginProcessSession: @unchecked Sendable {
     private var closed = false
     private var shuttingDown = false
     private var hostTasks: [String: Task<Void, Never>] = [:]
+    private var hostParents: [String: String] = [:]
+    private let hostWaitTimeout: TimeInterval
     private let sessionID = UUID().uuidString
 
     public init(executable: URL, arguments: [String], directory: URL? = nil,
                 hostCall: @escaping HostCall = { _, _ in throw PluginSessionError.plugin("宿主接口不可用。") },
-                onHostReply: @escaping @Sendable (String) -> Void = { _ in }) {
+                onHostReply: @escaping @Sendable (String) -> Void = { _ in }, hostWaitTimeout: TimeInterval = 60) {
         process.executableURL = executable
         process.arguments = arguments
         process.currentDirectoryURL = directory
@@ -105,6 +113,7 @@ public final class PluginProcessSession: @unchecked Sendable {
         process.standardError = errors
         self.hostCall = hostCall
         self.onHostReply = onHostReply
+        self.hostWaitTimeout = max(0.01, hostWaitTimeout)
         Self.registryLock.withLock {
             Self.registry.removeAll { $0.value == nil }
             Self.registry.append(WeakSession(self))
@@ -134,9 +143,11 @@ public final class PluginProcessSession: @unchecked Sendable {
                         self.queue.async {
                             guard self.pending[id] != nil, self.ready else { return }
                             self.send(PluginMessage(type: "cancel", id: id))
+                            self.cancelHostCalls(parent: id)
                         }
                     }
-                    pending[id] = Pending(message: message, continuation: continuation, deadline: deadline,
+                    pending[id] = Pending(message: message, continuation: continuation, deadline: deadline, remaining: max(0.01, timeout),
+                                          hostRemaining: hostWaitTimeout,
                                           cancellation: cancellation, observation: observation, listUpdate: onList)
                     queue.asyncAfter(deadline: .now() + max(0.01, timeout), execute: deadline)
                     try startIfNeeded()
@@ -154,6 +165,7 @@ public final class PluginProcessSession: @unchecked Sendable {
         queue.async { [self] in
             guard !closed, !shuttingDown else { return }
             shuttingDown = true
+            for task in hostTasks.values { task.cancel() }
             for id in pending.keys { send(PluginMessage(type: "cancel", id: id)) }
             resumePending(PluginSessionError.closed)
             if ready {
@@ -198,7 +210,7 @@ public final class PluginProcessSession: @unchecked Sendable {
 
     private func encoded(_ message: PluginMessage) throws -> Data {
         let data = try JSONEncoder().encode(message) + Data([10])
-        guard data.count <= 1024 * 1024 else { throw PluginSessionError.messageTooLarge }
+        guard data.count <= 24 * 1024 * 1024 else { throw PluginSessionError.messageTooLarge }
         return data
     }
 
@@ -223,7 +235,7 @@ public final class PluginProcessSession: @unchecked Sendable {
         let segments = data.split(separator: 10, omittingEmptySubsequences: false)
         for segment in segments.enumerated() {
             bytes.append(contentsOf: segment.element)
-            guard bytes.count + 1 <= 1024 * 1024 else { fail(PluginSessionError.messageTooLarge); return }
+            guard bytes.count + 1 <= 24 * 1024 * 1024 else { fail(PluginSessionError.messageTooLarge); return }
             if segment.offset < segments.count - 1 {
                 guard let message = try? JSONDecoder().decode(PluginMessage.self, from: bytes), message.protocolVersion == 1 else {
                     fail(PluginSessionError.invalidMessage); return
@@ -250,33 +262,15 @@ public final class PluginProcessSession: @unchecked Sendable {
             if message.id == sessionID + "/exit", message.type == "result" { finishClose() }
             return
         }
-        if message.type == "call" {
-            guard !shuttingDown, let method = message.method, let params = message.params,
-                  hostTasks[message.id] == nil, hostTasks.count < 16, message.id.hasPrefix("host-") else {
-                fail(PluginSessionError.invalidMessage); return
-            }
-            let handler = hostCall
-            hostTasks[message.id] = Task { [weak self] in
-                let result: Result<PluginValue, any Error>
-                do { result = .success(try await handler(method, params)) } catch { result = .failure(error) }
-                guard let self else { return }
-                self.queue.async {
-                    self.hostTasks.removeValue(forKey: message.id)
-                    guard !self.closed, !self.shuttingDown else { return }
-                    switch result {
-                    case let .success(value):
-                        let didReply = self.onHostReply
-                        self.send(PluginMessage(type: "result", id: message.id, value: value)) { didReply(method) }
-                    case let .failure(error): self.send(PluginMessage(type: "result", id: message.id, error: error.localizedDescription))
-                    }
-                }
-            }
+        if message.type == "hostCancel" {
+            hostTasks[message.id]?.cancel()
             return
         }
+        if message.type == "call" { receiveHostCall(message); return }
         guard let request = pending[message.id] else { fail(PluginSessionError.invalidMessage); return }
         if message.type == "list", request.message.method == "input", let value = message.value {
             do {
-                let items = try PluginListItem.decode(value)
+                let items = try PluginListSnapshot.decode(value)
                 if request.cancellation?.isCancelled != true { request.listUpdate?(items) }
             } catch { fail(error) }
         } else if message.type == "result" {
@@ -286,9 +280,65 @@ public final class PluginProcessSession: @unchecked Sendable {
         } else { fail(PluginSessionError.invalidMessage) }
     }
 
+    private func receiveHostCall(_ message: PluginMessage) {
+        guard !shuttingDown, let method = message.method, let params = message.params,
+              hostTasks[message.id] == nil, hostTasks.count < 16, message.id.hasPrefix("host-") else {
+            fail(PluginSessionError.invalidMessage); return
+        }
+        guard let parent = message.parentID, let request = pending[parent], request.cancellation?.isCancelled != true else {
+            send(PluginMessage(type: "result", id: message.id, error: PluginSessionError.cancelled.localizedDescription))
+            return
+        }
+        hostParents[message.id] = parent
+        refreshDeadline(parent)
+        let handler = hostCall
+        hostTasks[message.id] = Task { [weak self] in
+            let result: Result<PluginValue, any Error>
+            do {
+                let value = try await handler(method, params)
+                if Task.isCancelled { throw PluginSessionError.cancelled }
+                result = .success(value)
+            } catch { result = .failure(error) }
+            guard let self else { return }
+            self.queue.async {
+                self.hostTasks.removeValue(forKey: message.id)
+                self.hostParents.removeValue(forKey: message.id)
+                self.refreshDeadline(parent)
+                guard !self.closed, !self.shuttingDown else { return }
+                switch result {
+                case let .success(value):
+                    let didReply = self.onHostReply
+                    self.send(PluginMessage(type: "result", id: message.id, value: value)) { didReply(method) }
+                case let .failure(error): self.send(PluginMessage(type: "result", id: message.id, error: error.localizedDescription))
+                }
+            }
+        }
+    }
+
+    /// 仅暂停所属事件的业务计时；并发宿主调用共同消耗同一个 60 秒等待额度。
+    private func refreshDeadline(_ id: String) {
+        guard var request = pending[id] else { return }
+        let elapsed = ProcessInfo.processInfo.systemUptime - request.clockStart
+        if request.waitingForHost { request.hostRemaining -= elapsed }
+        else { request.remaining -= elapsed }
+        request.deadline.cancel()
+        request.waitingForHost = hostParents.values.contains(id)
+        request.clockStart = ProcessInfo.processInfo.systemUptime
+        let duration = request.waitingForHost ? request.hostRemaining : request.remaining
+        let deadline = DispatchWorkItem { [weak self] in self?.fail(PluginSessionError.timedOut) }
+        request.deadline = deadline
+        pending[id] = request
+        queue.asyncAfter(deadline: .now() + max(0, duration), execute: deadline)
+    }
+
+    private func cancelHostCalls(parent: String) {
+        for (id, owner) in hostParents where owner == parent { hostTasks[id]?.cancel() }
+    }
+
     private func finish(_ id: String, result: Result<PluginValue, any Error>) {
         guard let request = pending.removeValue(forKey: id) else { return }
         request.deadline.cancel()
+        cancelHostCalls(parent: id)
         if let observation = request.observation { request.cancellation?.removeObserver(observation) }
         if request.cancellation?.isCancelled == true { request.continuation.resume(throwing: PluginSessionError.cancelled) }
         else { request.continuation.resume(with: result) }
@@ -311,6 +361,7 @@ public final class PluginProcessSession: @unchecked Sendable {
         resumePending(PluginSessionError.closed)
         for task in hostTasks.values { task.cancel() }
         hostTasks.removeAll()
+        hostParents.removeAll()
         output.fileHandleForReading.readabilityHandler = nil
         errors.fileHandleForReading.readabilityHandler = nil
         // 先终止读端，阻塞的写操作才能退出；关闭写句柄由同一写队列完成。

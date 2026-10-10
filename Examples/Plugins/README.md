@@ -12,6 +12,8 @@
 | [Hello](Hello/README.md) | Shell | 最小安装流程与前台 `hello` 输出 |
 | [JavaScriptEcho](JavaScriptEcho) | JavaScript | 全局 leap 动作回调与文本反馈 |
 | [PythonEcho](PythonEcho) | Python | Python leap 回调与统一会话协议 |
+| [HostAPI](HostAPI/README.md) | JavaScript + 独立网页窗口 | 三端系统 API、剪贴板、外部输入及权限错误 |
+| [StandaloneWindow](StandaloneWindow/README.md) | JavaScript + 独立网页窗口 | 清单尺寸、窗口缩放及带错误处理的脚本调用 |
 | [WebEcho](WebEcho) | JavaScript + 网页 UI | `window.leap.invoke` 的最小网页调用 |
 | [ShellCommands](ShellCommands) | Shell | 同一入口分派多个命令，以及前台/后台模式 |
 

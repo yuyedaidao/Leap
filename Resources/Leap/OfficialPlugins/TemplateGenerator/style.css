@@ -9,7 +9,8 @@ header p { margin: 0 0 22px; line-height: 1.5; }
 form { padding: 20px; border: 1px solid light-dark(#dfe3ec, #353d4b); border-radius: 14px; background: light-dark(#fff, #222832); }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 label { display: block; font-weight: 550; }
-input:not([type=checkbox]), select { width: 100%; margin-top: 7px; padding: 9px 11px; border: 1px solid light-dark(#cbd2dd, #505a6c); border-radius: 7px; font: inherit; color: inherit; background: light-dark(#fff, #191f28); }
+/* 显式统一高度，避免原生下拉框与文本框的默认尺寸不同。 */
+input:not([type=checkbox]), select { height: 38px; width: 100%; margin-top: 7px; padding: 9px 11px; border: 1px solid light-dark(#cbd2dd, #505a6c); border-radius: 7px; font: inherit; color: inherit; background: light-dark(#fff, #191f28); }
 input:focus, select:focus, button:focus-visible { outline: 2px solid #5089ec; outline-offset: 2px; }
 input[readonly] { color: light-dark(#637085, #b1bdcf); }
 .directory { display: flex; gap: 10px; align-items: end; }

@@ -2,7 +2,7 @@ import Foundation
 
 public struct PluginManifest: Codable, Equatable, Sendable {
     public static let hostVersion = "1.2.0"
-    /// 单位为逻辑点，包含宿主操作栏，不包含系统窗口标题栏。
+    /// 单位为逻辑点：独立窗口为网页内容尺寸，内嵌高度包含宿主操作栏；均不含系统标题栏。
     public struct WebWindow: Codable, Equatable, Sendable {
         public let width: Int
         public let height: Int

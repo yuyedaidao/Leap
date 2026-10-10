@@ -20,9 +20,35 @@
   };
   const call = (handler, params) => {
     if (!active) return Promise.reject(new Error('插件会话已退出。'));
-    return window.webkit.messageHandlers[handler].postMessage(params);
+    const size = value => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    if (size(params) > 24 * 1024 * 1024) return Promise.reject(new Error('插件消息超过 24MB。'));
+    return Promise.resolve(window.webkit.messageHandlers[handler].postMessage(params)).then(value => {
+      if (size(value) > 24 * 1024 * 1024) throw new Error('插件消息超过 24MB。');
+      return value;
+    });
   };
-  const host = (method, params = {}) => call('leapHost', { method, params });
+  let hostSequence = 0;
+  const host = (method, params = {}) => {
+    const callID = `web-host-${++hostSequence}`;
+    const signal = inputController.signal;
+    if (!active || signal.aborted) return Promise.reject(new Error('插件会话已退出或输入已取消。'));
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', cancel); };
+      const cancel = () => {
+        cleanup();
+        // 取消走独立消息，不等待正在处理的宿主请求，防止过期输入继续产生副作用。
+        void call('leapHost', { method: '__cancelHostCall', params: { callID } }).catch(() => {});
+        reject(new Error(signal.aborted ? '插件输入已取消。' : '宿主调用超时。'));
+      };
+      const timer = setTimeout(cancel, 60000);
+      signal.addEventListener('abort', cancel, { once: true });
+      Promise.resolve(call('leapHost', { method, params, callID })).then(
+        value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); }
+      );
+    });
+  };
+  const createHostSDK = window.__leapCreateHostSDK;
+  delete window.__leapCreateHostSDK;
   window.__leapDispatch = (event, value) => {
     if (!active || !listeners[event]) return;
     if (event === 'input') {
@@ -43,10 +69,7 @@
     },
     chooseDirectory: () => call('leapDirectory', { action: 'choose' }),
     openDirectory: path => call('leapDirectory', { action: 'open', path }),
-    copyText: text => {
-      if (typeof text !== 'string') return Promise.reject(new TypeError('复制内容必须是字符串。'));
-      return host('copyText', { text });
-    },
+    ...createHostSDK(host),
     outPlugin: () => host('outPlugin'),
     hideMainWindow: () => host('hideMainWindow'),
     onEnter: callback => subscribe('enter', callback),
