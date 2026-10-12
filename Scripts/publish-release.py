@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""本机构建 Leap，打包并发布到独立的 GitHub 下载仓库。"""
+import argparse
+import hashlib
+import json
+import os
+import platform
+import plistlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_REPO = "yuyedaidao/leap-releases"
+
+
+def run(*args, log=None):
+    """长任务写入日志，短查询捕获结果；参数列表避免 Shell 插值。"""
+    if log is None:
+        return subprocess.run(args, cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
+    print(f"执行 {args[0]}，日志：{log}", flush=True)
+    with log.open("a", encoding="utf-8") as output:
+        output.write(f"\n执行 {args[0]}\n")
+        output.flush()
+        subprocess.run(args, cwd=ROOT, check=True, stdout=output, stderr=subprocess.STDOUT, text=True)
+    return ""
+
+
+def github(path):
+    try:
+        return json.loads(run("gh", "api", path))
+    except subprocess.CalledProcessError as error:
+        # 只有明确的 404 才代表不存在，不能在断网或权限不足时创建替代仓库。
+        if "(HTTP 404)" in (error.stderr or ""):
+            return None
+        raise
+
+
+def require_clean():
+    if run("git", "status", "--porcelain", "--untracked-files=all"):
+        raise ValueError("源码工作区有未提交改动，请先提交或自行整理；脚本不会自动提交或清理。")
+
+
+def check_repo(repo):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repo) or repo.split("/")[1] in (".", ".."):
+        raise ValueError("仓库必须使用 owner/repo 格式。")
+    data = github(f"repos/{repo}")
+    if data is None:
+        login = run("gh", "api", "user", "--jq", ".login")
+        if repo != DEFAULT_REPO or login != repo.split("/")[0]:
+            raise ValueError("目标仓库不可访问；只有当前账号的默认下载仓库可以自动创建。")
+        return None
+    if data.get("private") or data.get("archived") or data.get("disabled"):
+        raise ValueError("下载仓库必须公开且可写；脚本不会修改仓库可见性。")
+    if not data.get("permissions", {}).get("push"):
+        raise ValueError("当前 GitHub 账号没有目标仓库的写入权限。")
+    return data
+
+
+def preflight(args):
+    if platform.system() != "Darwin" or platform.machine() != "arm64":
+        raise ValueError("发布脚本仅支持 Apple Silicon Mac。")
+    for command in ("git", "gh", "tuist", "xcodebuild", "swiftlint", "codesign", "xcrun",
+                    "hdiutil", "ditto", "file", "lipo", "otool", "install_name_tool", "security", "spctl"):
+        if shutil.which(command) is None:
+            raise ValueError(f"缺少必要工具：{command}")
+    if args.notes_file:
+        # 发布说明必须在任何远端写操作之前读成功。
+        args.notes_file = args.notes_file.resolve()
+        args.notes_file.read_text(encoding="utf-8")
+    require_clean()
+    run("gh", "auth", "status", "--hostname", "github.com")
+    identity, profile = "", ""
+    if not args.test:
+        identities = re.findall(r'"(Developer ID Application:[^"]+)"',
+                                run("security", "find-identity", "-v", "-p", "codesigning"))
+        identity = os.environ.get("LEAP_SIGN_IDENTITY", "")
+        if not identity and len(identities) == 1:
+            identity = identities[0]
+        if not identity or identity not in identities:
+            raise ValueError("需要有效的 Developer ID Application 证书；多张证书时请设置 LEAP_SIGN_IDENTITY。")
+        profile = os.environ.get("LEAP_NOTARY_PROFILE", "LeapNotary").strip()
+        if not profile:
+            raise ValueError("LEAP_NOTARY_PROFILE 不能为空。")
+        run("xcrun", "notarytool", "history", "--keychain-profile", profile, "--output-format", "json")
+    return check_repo(args.repo), identity, profile
+
+
+def release_info(app, test):
+    with (app / "Contents/Info.plist").open("rb") as source:
+        info = plistlib.load(source)
+    if not isinstance(info, dict):
+        raise ValueError("应用 Info.plist 必须是字典。")
+    version, build = info.get("CFBundleShortVersionString"), info.get("CFBundleVersion")
+    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("应用版本必须是三段数字。")
+    if not isinstance(build, str) or not re.fullmatch(r"\d+", build):
+        raise ValueError("应用构建号必须是非负整数。")
+    tag = f"v{version}" + (f"-test.{build}" if test else "")
+    filename = f"Leap-{version}-arm64{'-test' if test else ''}.dmg"
+    return version, build, tag, filename
+
+
+def require_new_tag(repo, tag):
+    if github(f"repos/{repo}/releases/tags/{tag}") is not None:
+        raise ValueError(f"发行版 {tag} 已存在，不能覆盖；若是失败草稿，请按文档手动恢复。")
+    if github(f"repos/{repo}/git/ref/tags/{tag}") is not None:
+        raise ValueError(f"标签 {tag} 已存在，不能覆盖；请使用新版本或新构建号。")
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def publish(repo, tag, test, artifacts, notes, target):
+    print(f"上传 {repo} / {tag}…", flush=True)
+    require_new_tag(repo, tag)
+    try:
+        run("gh", "release", "create", tag, "--repo", repo, "--target", target,
+            "--draft", f"--prerelease={'true' if test else 'false'}", "--title", f"Leap {tag}",
+            "--notes-file", str(notes))
+        run("gh", "release", "upload", tag, *(str(path) for path in artifacts), "--repo", repo)
+        # 草稿还没有公开下载地址，通过已认证 CLI 回读全部附件再公开。
+        with tempfile.TemporaryDirectory(prefix="leap-download-", dir=notes.parent) as temporary:
+            downloaded = Path(temporary)
+            run("gh", "release", "download", tag, "--repo", repo, "--dir", str(downloaded))
+            for original in artifacts:
+                copy = downloaded / original.name
+                if not copy.is_file() or copy.stat().st_size != original.stat().st_size or sha256(copy) != sha256(original):
+                    raise ValueError(f"远端附件校验失败：{original.name}")
+        run("gh", "release", "edit", tag, "--repo", repo, "--draft=false",
+            f"--prerelease={'true' if test else 'false'}", f"--latest={'false' if test else 'true'}")
+    except (ValueError, OSError, subprocess.CalledProcessError):
+        print(f"发布未完成，本地产物保留在 {notes.parent}。\n"
+              f"请检查 https://github.com/{repo}/releases；若已创建草稿，将缺少的附件上传后，"
+              "按发行手册回读校验，再手动公开。脚本不会删除或覆盖远端附件。", file=sys.stderr)
+        raise
+    return f"https://github.com/{repo}/releases/tag/{tag}"
+
+
+def release(args):
+    repository, identity, profile = preflight(args)
+    commit = run("git", "rev-parse", "HEAD")
+    output_root = ROOT / "build/releases"
+    output_root.mkdir(parents=True, exist_ok=True)
+    output = Path(tempfile.mkdtemp(prefix="run-", dir=output_root))
+    log = output / "build.log"
+    print(f"本次产物和日志：{output}", flush=True)
+    log.write_text(f"源码提交：{commit}\n模式：{'测试' if args.test else '正式'}\n", encoding="utf-8")
+    try:
+        run(str(ROOT / "Scripts/prepare-runtimes.sh"), log=log)
+        run("tuist", "install", log=log)
+        run("tuist", "generate", "--no-open", log=log)
+        run("swiftlint", "lint", "Sources", "Tests/LeapTests", "Project.swift", log=log)
+        derived = output / "DerivedData"
+        build_args = ("-workspace", "Leap.xcworkspace", "-scheme", "Leap",
+                      "-destination", "platform=macOS,arch=arm64", "-derivedDataPath", str(derived),
+                      "ARCHS=arm64", "ONLY_ACTIVE_ARCH=YES", "CODE_SIGNING_ALLOWED=NO")
+        run("xcodebuild", "build", *build_args, "-configuration", "Release", log=log)
+        # @testable 依赖 Debug 的 enable-testing，不能用测试构建覆盖待发行的 Release。
+        run("xcodebuild", "test", *build_args, "-configuration", "Debug", "-only-testing:LeapTests", log=log)
+        run(sys.executable, "-m", "unittest", "discover", "-s", "Tests/Release", "-v", log=log)
+        # Tuist 解析依赖可能改动锁文件；有变化就停止，不能发行无法复现的源码状态。
+        require_clean()
+        if run("git", "rev-parse", "HEAD") != commit:
+            raise ValueError("构建期间源码提交已改变，请重新运行，不能发布混合源码状态。")
+        app = derived / "Build/Products/Release/Leap.app"
+        version, build, tag, filename = release_info(app, args.test)
+        if repository is not None:
+            require_new_tag(args.repo, tag)
+        download_url = f"https://github.com/{args.repo}/releases/download/{tag}/{filename}"
+        package_args = [sys.executable, str(ROOT / "Scripts/package-release.py"), str(app),
+                        "--output", str(output), "--download-url", download_url]
+        if args.test:
+            package_args += ["--test"]
+        else:
+            package_args += ["--identity", identity, "--notary-profile", profile]
+        run(*package_args, log=log)
+        dmg = output / filename
+        metadata = output / f"Leap-{version}-release.json"
+        checksum = output / "SHA256SUMS.txt"
+        checksum.write_text(f"{sha256(dmg)}  {filename}\n", encoding="utf-8")
+        notes = output / "release-notes.md"
+        supplied = args.notes_file.read_text(encoding="utf-8") if args.notes_file else "Leap macOS 应用发行。"
+        warning = "\n\n测试包：未经过 Apple 公证，可能被 Gatekeeper 拦截。" if args.test else ""
+        notes.write_text(f"{supplied}{warning}\n\n版本：{version}（构建 {build}）\n"
+                         f"系统要求：macOS 26+ / Apple Silicon\n源码提交：{commit}\n"
+                         f"此仓库仅托管下载，发行标签不代表应用源码。\n\n"
+                         f"DMG SHA256：`{sha256(dmg)}`\n", encoding="utf-8")
+        if repository is None:
+            # 不传 --source、--push 或 --remote，避免将私有源码同步到下载仓库。
+            run("gh", "repo", "create", args.repo, "--public", "--add-readme", "--description", "Leap macOS 应用下载")
+        repository = check_repo(args.repo)
+        if repository is None:
+            raise ValueError("下载仓库创建后仍无法访问。")
+        target = run("gh", "api", f"repos/{args.repo}/commits/{repository['default_branch']}", "--jq", ".sha")
+        url = publish(args.repo, tag, args.test, [dmg, metadata, checksum], notes, target)
+        print(f"发布成功：{url}\nDMG 下载：{download_url}\n本地产物：{output}", flush=True)
+    except (ValueError, OSError, subprocess.CalledProcessError):
+        print(f"本次失败；产物和日志保留在 {output}，请查看 build.log。", file=sys.stderr)
+        raise
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--test", action="store_true", help="发布临时签名、未公证的预发布版本")
+    parser.add_argument("--repo", default=DEFAULT_REPO, help="独立公开下载仓库，格式 owner/repo")
+    parser.add_argument("--notes-file", type=Path, help="UTF-8 更新说明文件")
+    args = parser.parse_args()
+    try:
+        release(args)
+    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+        # 不输出完整命令或环境，避免认证信息进入日志。
+        message = f"命令 {error.cmd[0]} 失败（退出码 {error.returncode}）" if isinstance(error, subprocess.CalledProcessError) else str(error)
+        print(f"发行失败：{message}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -61,8 +61,10 @@ public struct PluginScriptExecutor: Sendable {
         guard FileManager.default.fileExists(atPath: bootstrap.path) else {
             throw PluginSessionError.plugin("Leap SDK 资源不可用。")
         }
+        // Python 缓存不能写回已签名的应用资源，否则会破坏发行包的资源封印。
+        let arguments = (manifest.runtime == .python ? ["-B"] : []) + [bootstrap.path, entry.path]
         return PluginScriptSession(process: PluginProcessSession(
-            executable: runtime, arguments: [bootstrap.path, entry.path], directory: pluginDirectory, hostCall: hostCall, onHostReply: onHostReply
+            executable: runtime, arguments: arguments, directory: pluginDirectory, hostCall: hostCall, onHostReply: onHostReply
         ), commandID: commandID, initialInput: query)
     }
 

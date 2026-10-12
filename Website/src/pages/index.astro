@@ -1,0 +1,27 @@
+---
+import Page from '../layouts/Page.astro';
+import Download from '../components/Download.astro';
+---
+<Page>
+  <section class="hero shell">
+    <div class="hero-copy"><p class="eyebrow">给 MAC 的一个小小捷径</p><h1>从一个搜索框，<br />开始你的<span>下一步。</span></h1><p class="lead">想打开的应用，想处理的文本，想完成的小事。<br class="desktop-break" />唤起 Leap，输入，然后继续。</p><Download /><a class="demo-link" href="#demo"><span aria-hidden="true">▷</span> 15 秒，看看它怎么工作</a></div>
+    <figure class="hero-visual"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="hero-shortcut"><kbd>⌥</kbd><kbd>⌘</kbd><kbd>L</kbd><span>随时唤起</span></div><img class="app-shot" src="/media/search.png" width="1280" height="800" alt="Leap 搜索 Safari，列表显示匹配的 Mac 应用和键盘快捷键" fetchpriority="high" /><figcaption>一个入口，让想法接上行动。</figcaption></figure>
+  </section>
+  <section class="shortcut-strip shell" aria-label="基本操作"><p>少一次寻找，<strong>多一点顺手。</strong></p><div><span><kbd>⌥⌘L</kbd> 唤起</span><span class="step-arrow" aria-hidden="true">→</span><span>输入关键词</span><span class="step-arrow" aria-hidden="true">→</span><span><kbd>↵</kbd> 执行</span></div></section>
+  <section id="features" class="features shell">
+    <div class="section-heading"><p class="eyebrow">日常的小事，一个入口</p><h2>从找应用，<br />到把事情做好。</h2><p>打开、转换、执行。让键盘上的下一步，<br />自然接住此刻的工作。</p></div>
+    <div class="feature-row"><div class="feature-copy"><span class="feature-number">01 / 打开应用</span><h3>想到名字，就能出发。</h3><p>输入应用名称，选择结果，按下回车。<br />不用打断思路去翻找图标。</p><a href="/guide/#search">了解应用搜索 <span aria-hidden="true">↗</span></a></div><div class="feature-art search-art"><img src="/media/search.png" alt="真实应用搜索界面" width="1280" height="800" loading="lazy" /></div></div>
+    <div class="feature-row reverse"><div class="feature-copy"><span class="feature-number">02 / 处理文本</span><h3>小工具，留在手边。</h3><p>通过文本转换示例插件，把输入变成大小写等结果。<br />本地插件把你常用的操作带进搜索框。</p><a href="/guide/#plugins">了解本地插件 <span aria-hidden="true">↗</span></a></div><div class="feature-art"><img src="/media/text-convert.png" alt="文本转换插件显示 Hello Leap 的转换结果" width="1280" height="800" loading="lazy" /></div></div>
+    <div class="keyboard-feature"><div><span class="feature-number">03 / 跟上键盘</span><h3>手不用离开，<br />事情继续向前。</h3><p>上下键选中，回车执行；<br />也可以直接按数字快捷键。</p></div><div class="key-grid" aria-label="键盘操作"><div><kbd>↑</kbd><kbd>↓</kbd><span>选择结果</span></div><div><kbd>↵</kbd><span>执行</span></div><div><kbd>⌘</kbd><kbd>1</kbd><span>执行第一项</span></div><div><kbd>esc</kbd><span>返回 / 收起</span></div></div></div>
+  </section>
+  <section id="demo" class="demo-section shell"><div class="section-heading"><p class="eyebrow">看一次，就明白</p><h2>下一步，真的很近。</h2><p>真实界面演示：应用搜索、进入插件与文本转换。</p></div><video controls playsinline preload="none" poster="/media/demo-poster.png" width="1280" height="800" aria-label="Leap 操作演示，约 15 秒"><source src="/media/demo.mp4" type="video/mp4" /><p>浏览器不支持视频，<a href="/media/demo.mp4">下载操作演示</a>。</p></video><p class="video-caption">⌥⌘L 唤起 → 输入名称 → 回车进入 → 用键盘选择结果</p></section>
+  <section class="developer-section shell"><div><p class="eyebrow">把你的工具，带进 LEAP</p><h2>一个插件，<br />接住你自己的工作流。</h2><p>JavaScript、Python 或 Shell。<br />从模板开始，专注你的逻辑。</p><a class="button secondary" href="/developers/">开始开发插件 <span aria-hidden="true">↗</span></a></div><div class="code-preview"><div><i></i><i></i><i></i><span>main.js</span></div><pre><code><span>// 输入变化，更新原生列表</span>
+leap.onInputChange((&#123; text, setList &#125;) =&gt; &#123;
+  setList(text ? [&#123;
+    id: 'upper',
+    title: text.toUpperCase(),
+  &#125;] : []);
+&#125;);</code></pre><p>原生列表由 Leap 展示，插件负责业务逻辑。</p></div></section>
+  <section class="faq shell"><div><p class="eyebrow">你可能想知道</p><h2>开始之前。</h2></div><div><details><summary>支持哪些 Mac？</summary><p>当前发行目标是 macOS 26 或更高版本、搭载 Apple Silicon 的 Mac。暂未提供 Intel 版本。</p></details><details><summary>需要注册账号吗？</summary><p>不需要。Leap 宿主不提供账号或云同步，插件和使用记录保存在本机。</p></details><details><summary>插件从哪里来？</summary><p>可以从可信来源获取插件目录，在设置的“本地插件”中安装。开发者也可以用内置模板生成器创建自己的插件。</p></details><details><summary>Leap 和插件会联网吗？</summary><p>Leap 宿主不收集遥测。本地插件可以按其代码访问网络和文件，请了解来源后再确认安装。详见<a href="/privacy/">隐私说明</a>。</p></details></div></section>
+  <section id="download" class="download-section shell"><img src="/media/icon.png" width="88" height="88" alt="Leap 袋鼠图标" loading="lazy" /><h2>让下一步，顺手一点。</h2><p>把常用的应用和工具，放进一个搜索框。</p><Download /></section>
+</Page>

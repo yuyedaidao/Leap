@@ -1,0 +1,14 @@
+---
+import Page from '../layouts/Page.astro';
+import Download from '../components/Download.astro';
+---
+<Page title="使用指南 · Leap" description="了解 Leap 的安装、默认快捷键、应用搜索、键盘操作与本地插件安装。">
+  <article class="prose shell"><p class="eyebrow">使用指南</p><h1>从第一次唤起开始。</h1><p class="intro">一个搜索框，接住常用的应用与小工具。</p>
+    <h2 id="install">安装 Leap</h2><p>当前版本的发行目标为 macOS 26+、Apple Silicon。安装包准备完成后，下载入口会在官网开放。</p><Download /><ol><li>下载 DMG，打开后将 Leap 拖到“应用程序”。</li><li>从“应用程序”打开 Leap。首次打开时，macOS 会检查下载来源与签名。</li><li>按 <kbd>⌥⌘L</kbd> 唤起搜索框。可在设置中修改全局快捷键。</li></ol>
+    <h2 id="search">找到应用，直接打开</h2><p>输入应用名称，用上下键选择结果，按回车打开。Leap 会索引 Mac 上可用的应用；刚安装或移除应用时，索引可能需要短暂更新。</p><img src="/media/search.png" width="1280" height="800" alt="Leap 搜索 Safari 的界面" />
+    <h2 id="keyboard">常用键盘操作</h2><table><thead><tr><th>按键</th><th>操作</th></tr></thead><tbody><tr><td><kbd>⌥⌘L</kbd></td><td>唤起 Leap（默认快捷键）</td></tr><tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>选择结果</td></tr><tr><td><kbd>↵</kbd></td><td>执行当前选中项</td></tr><tr><td><kbd>⌘1</kbd> – <kbd>⌘9</kbd> / <kbd>⌘0</kbd></td><td>执行列表前九项 / 第十项；普通搜索最多八项，最近使用网格不使用这些快捷键</td></tr><tr><td><kbd>esc</kbd></td><td>退出插件返回搜索；再按一次收起</td></tr></tbody></table>
+    <h2 id="plugins">安装本地插件</h2><ol><li>从可信来源取得完整插件目录，包含 <code>manifest.json</code> 和业务脚本。</li><li>打开设置 → 本地插件，选择该目录。</li><li>检查插件来源与内容，在信任提示中确认安装。</li><li>回到搜索框，输入插件名称或命令关键词即可使用。</li></ol><p>安装会复制目录到 Leap 的受管目录。修改源代码后需要重新安装；相同插件 ID 会更新已有副本。卸载不会删除你的源目录。</p><p>插件具有其运行时提供的本地文件和网络能力，请只安装可信来源的插件。Node.js 和 Python 随应用提供，Shell 使用系统 zsh。</p>
+    <h2>做一个自己的插件</h2><p>设置 → 本地插件 → 创建插件模板。选择空目录、名称、运行时和交互方式，生成后再安装目录。模板生成器不会自动安装。</p><p><a href="/developers/">阅读插件开发指南 →</a></p>
+    <h2>遇到问题时</h2><p>快捷键无响应时，先检查是否被其他应用占用，再在设置中修改。插件失败时检查界面反馈和日志；网络请求、文件权限或插件代码都可能影响结果。</p><p>部分系统操作需要辅助功能、自动化或通知授权。只在你调用相应功能时按系统提示授权；拒绝后也可以继续使用其他功能。</p>
+  </article>
+</Page>
