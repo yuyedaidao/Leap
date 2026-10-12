@@ -263,8 +263,10 @@ struct LauncherShellTests {
         let cacheURL = root.appendingPathComponent("index.json")
         try SystemApplicationIndexCache.save(applications, to: cacheURL)
         #expect(SystemApplicationIndexCache.load(from: cacheURL) == applications)
-        try Data(#"{"version":2,"applications":[]}"#.utf8).write(to: cacheURL)
-        #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
+        for version in [2, 3] {
+            try Data("{\"version\":\(version),\"applications\":[]}".utf8).write(to: cacheURL)
+            #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
+        }
         try Data("not-json".utf8).write(to: cacheURL)
         #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
     }
@@ -350,7 +352,8 @@ struct LauncherShellTests {
         bundleID: String,
         in directory: URL,
         backgroundOnly: Bool = false,
-        localizedName: String? = nil
+        localizedName: String? = nil,
+        localizedTable: [String: Any]? = nil
     ) throws -> URL {
         let application = directory.appendingPathComponent("\(name).app", isDirectory: true)
         let contents = application.appendingPathComponent("Contents", isDirectory: true)
@@ -374,7 +377,107 @@ struct LauncherShellTests {
             let localizedInfo = "\"CFBundleDisplayName\" = \"\(localizedName)\";"
             try Data(localizedInfo.utf8).write(to: localizedDirectory.appendingPathComponent("InfoPlist.strings"))
         }
+        if let localizedTable {
+            let resources = contents.appendingPathComponent("Resources", isDirectory: true)
+            try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+            let tableData = try PropertyListSerialization.data(
+                fromPropertyList: localizedTable, format: .binary, options: 0
+            )
+            try tableData.write(to: resources.appendingPathComponent("InfoPlist.loctable"))
+        }
         return application
+    }
+}
+
+extension LauncherShellTests {
+    @Test("系统工具 loctable 支持中文、英文别名及拼音检索", arguments: [
+        ("Activity Monitor", "活动监视器", "huodongjianshiqi", "hdjsq"),
+        ("Disk Utility", "磁盘工具", "cipangongju", "cpgj")
+    ])
+    func systemApplicationScannerIndexesLocalizationTable(
+        originalName: String, localizedName: String, pinyin: String, initials: String
+    ) throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeApplication(
+            named: originalName,
+            bundleID: "com.example.tool",
+            in: root,
+            localizedTable: [
+                "zh_CN": ["CFBundleDisplayName": localizedName, "CFBundleName": localizedName],
+                "en": ["CFBundleName": originalName],
+                // 元数据即使包含同名字段，也不能参与语言选择或搜索。
+                "LocProvenance": ["CFBundleName": "索引元数据"]
+            ]
+        )
+
+        let application = try #require(SystemApplicationScanner(
+            roots: [root], preferredLanguages: ["zh-Hans-CN"]
+        ).scan().first)
+        #expect(application.name == localizedName)
+        #expect(application.matchRank(for: localizedName) == 0)
+        #expect(application.matchRank(for: String(localizedName.prefix(2))) == 1)
+        #expect(application.matchRank(for: String(localizedName.suffix(2))) == 2)
+        #expect(application.matchRank(for: originalName) == 0)
+        #expect(application.matchRank(for: pinyin) != nil)
+        #expect(application.matchRank(for: initials) != nil)
+        #expect(application.alternateNames == [originalName])
+        #expect(application.matchRank(for: "索引元数据") == nil)
+
+        let englishApplication = try #require(SystemApplicationScanner(
+            roots: [root], preferredLanguages: ["en"]
+        ).scan().first)
+        #expect(englishApplication.name == originalName)
+        #expect(englishApplication.matchRank(for: localizedName) == 0)
+    }
+
+    @Test("同语言 strings 名称优先，loctable 补充检索别名")
+    func systemApplicationScannerPreservesStringsPriority() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeApplication(
+            named: "Utility",
+            bundleID: "com.example.utility",
+            in: root,
+            localizedName: "旧名称",
+            localizedTable: ["zh-Hans": ["CFBundleDisplayName": "新名称", "CFBundleName": "旧名称"]]
+        )
+
+        let application = try #require(SystemApplicationScanner(
+            roots: [root], preferredLanguages: ["zh-Hans"]
+        ).scan().first)
+        #expect(application.name == "旧名称")
+        #expect(application.alternateNames == ["Utility", "新名称"])
+        #expect(application.matchRank(for: "新名称") == 0)
+    }
+
+    @Test("无效 loctable 不影响应用收录和原始名称回退")
+    func systemApplicationScannerIgnoresInvalidLocalizationTables() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let invalidResources = [
+            Data("not a property list".utf8),
+            try PropertyListSerialization.data(fromPropertyList: ["invalid root"], format: .binary, options: 0),
+            try PropertyListSerialization.data(fromPropertyList: [
+                "zh_CN": ["CFBundleName": 42, "CFBundleDisplayName": true],
+                "zh_TW": ["CFBundleName": " \n"],
+                "en": "invalid language entry"
+            ], format: .binary, options: 0)
+        ]
+        for (index, resource) in invalidResources.enumerated() {
+            let name = "Fallback\(index)"
+            let applicationURL = try makeApplication(
+                named: name,
+                bundleID: "com.example.fallback\(index)",
+                in: root,
+                localizedTable: [:]
+            )
+            try resource.write(to: applicationURL.appendingPathComponent("Contents/Resources/InfoPlist.loctable"))
+        }
+
+        let applications = SystemApplicationScanner(roots: [root], preferredLanguages: ["zh-Hans-CN"]).scan()
+        #expect(applications.map(\.name) == ["Fallback0", "Fallback1", "Fallback2"])
+        #expect(applications.allSatisfy { $0.matchRank(for: $0.name) == 0 })
     }
 }
 

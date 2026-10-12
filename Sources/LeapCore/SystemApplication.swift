@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import YQLogger
 
 public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Sendable {
     public let name: String
@@ -67,6 +68,8 @@ public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Send
 }
 
 public struct SystemApplicationScanner: Sendable {
+    private static let logger = YQLogger(label: "com.padding.leap/application-scanner")
+
     public static let defaultRoots = [
         URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Applications", isDirectory: true),
         URL(fileURLWithPath: "/Applications", isDirectory: true),
@@ -148,7 +151,9 @@ public struct SystemApplicationScanner: Sendable {
         }
 
         let localizedNames = localizedNames(in: bundle)
-        let localizedInfo = bundle.localizedInfoDictionary ?? [:]
+        // 不调用 localizedInfoDictionary：损坏的 loctable 可能触发无法用 Swift catch 捕获的系统异常。
+        let localizedInfo = localizedNames.isEmpty
+            ? propertyListDictionary(at: bundle.url(forResource: "InfoPlist", withExtension: "strings")) : [:]
         let name = localizedNames.first
             ?? (localizedInfo["CFBundleDisplayName"] as? String)
             ?? (localizedInfo["CFBundleName"] as? String)
@@ -168,35 +173,51 @@ public struct SystemApplicationScanner: Sendable {
     }
 
     private func localizedNames(in bundle: Bundle) -> [String] {
+        // 系统应用可能只在 loctable 中保存名称；每次扫描只解析一次，共享给各语言。
+        let table = propertyListDictionary(at: bundle.url(forResource: "InfoPlist", withExtension: "loctable"))
+        let tableLocalizations = table.keys.filter {
+            $0 != "LocProvenance" && $0 != "NonLocalized" && table[$0] is [String: Any]
+        }
+        let availableLocalizations = Set(bundle.localizations + tableLocalizations).sorted()
         let preferredLocalizations = Bundle.preferredLocalizations(
-            from: bundle.localizations,
+            from: availableLocalizations,
             forPreferences: preferredLanguages
         )
-        let localizations = preferredLocalizations + bundle.localizations.filter {
+        let localizations = preferredLocalizations + availableLocalizations.filter {
             !preferredLocalizations.contains($0)
         }
         return localizations.flatMap { localization -> [String] in
-            guard let url = bundle.url(
+            let strings = propertyListDictionary(at: bundle.url(
                 forResource: "InfoPlist",
                 withExtension: "strings",
                 subdirectory: nil,
                 localization: localization
-            ),
-                let data = try? Data(contentsOf: url),
-                let info = try? PropertyListSerialization.propertyList(
-                    from: data,
-                    options: [],
-                    format: nil
-                ) as? [String: Any]
-            else {
-                return []
-            }
+            ))
+            let localizedTable = table[localization] as? [String: Any] ?? [:]
 
-            // 先返回用户首选语言，列表显示与 Finder 一致；其他语言仍保留为检索别名。
-            return [
-                info["CFBundleDisplayName"] as? String,
-                info["CFBundleName"] as? String
-            ].compactMap { $0 }
+            // 首选语言先显示，同语言沿用 strings 的优先级；其余名称作为搜索别名。
+            return [strings, localizedTable].flatMap { info in
+                [info["CFBundleDisplayName"] as? String, info["CFBundleName"] as? String]
+                    .compactMap { $0 }
+                    .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            }
+        }
+    }
+
+    private func propertyListDictionary(at url: URL?) -> [String: Any] {
+        guard let url else { return [:] }
+        do {
+            let data = try Data(contentsOf: url)
+            guard let dictionary = try PropertyListSerialization.propertyList(
+                from: data, options: [], format: nil
+            ) as? [String: Any] else {
+                Self.logger.warning("忽略非字典格式的应用名称资源：\(url.path)。")
+                return [:]
+            }
+            return dictionary
+        } catch {
+            Self.logger.warning("读取应用名称资源失败：\(url.path)，\(error.localizedDescription)。")
+            return [:]
         }
     }
 }
@@ -207,7 +228,7 @@ public enum SystemApplicationIndexCache {
         let applications: [SystemApplicationDescriptor]
     }
 
-    private static let version = 3
+    private static let version = 4
 
     public static func load(from url: URL, fileManager: FileManager = .default) -> [SystemApplicationDescriptor]? {
         guard fileManager.fileExists(atPath: url.path),
