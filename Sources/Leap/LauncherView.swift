@@ -57,13 +57,9 @@ struct LauncherView: View {
         }
         .padding(24)
         .frame(width: 800)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(.separator.opacity(0.45), lineWidth: 1)
-        }
+        // 整个启动器共用一层原生玻璃，避免列表和插件内容叠加玻璃影响可读性。
+        .glassEffect(.regular, in: .rect(cornerRadius: 18))
         .ignoresSafeArea()
-        .shadow(color: .black.opacity(0.16), radius: 22, y: 8)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
         } action: { height in

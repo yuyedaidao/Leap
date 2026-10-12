@@ -138,6 +138,9 @@ final class LauncherPanelController {
         )
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
+        // 让原生玻璃呈现窗口后方的内容，避免被 NSPanel 的默认底色遮住。
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
         panel.level = .floating
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = false
