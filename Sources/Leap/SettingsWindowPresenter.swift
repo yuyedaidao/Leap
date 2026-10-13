@@ -2,86 +2,150 @@ import AppKit
 import SwiftUI
 import YQLogger
 
-/// 保留 SwiftUI Settings 场景，仅协调原生窗口的 Space 与屏幕归属。
+/// 设置内容仍由 SwiftUI 展示，窗口复用启动器的原生面板定位与 Space 行为。
 @MainActor
 final class SettingsWindowPresenter {
-    private weak var window: NSWindow?
-    private var pendingScreen: NSScreen?
+    private var panel: SettingsPanel?
     private let logger = YQLogger(label: "com.padding.leap/settings-window")
 
-    func prepare(on screen: NSScreen?) {
-        pendingScreen = screen
-        guard let window else { return }
-        configure(window)
-        position(window, on: screen)
-        if window.isMiniaturized { window.deminiaturize(nil) }
-        pendingScreen = nil
-        // 复用窗口也要显式激活；仅打开 Settings 场景不能保证已有窗口获得焦点。
-        NSApp.activate()
-        window.makeKeyAndOrderFront(nil)
-        logger.debug("已有设置窗口已激活并置前。")
+    init() {
+        // 非激活面板不会经历应用失活通知；切换到其他应用时仍需撤销临时置顶。
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(frontmostApplicationChanged(_:)),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil
+        )
     }
 
-    func register(_ window: NSWindow) {
-        self.window = window
-        configure(window)
-        guard let screen = pendingScreen else { return }
-        pendingScreen = nil
-        // 首次创建时等 SwiftUI 完成内容尺寸布局，再按实际窗口大小定位。
-        Task { @MainActor [weak self, weak window] in
-            guard let self, let window else { return }
-            position(window, on: screen)
+    @objc private func frontmostApplicationChanged(_ notification: Notification) {
+        guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              application.processIdentifier != ProcessInfo.processInfo.processIdentifier,
+              let panel, panel.level != .normal else { return }
+        panel.level = .normal
+        logger.debug("已切换到其他应用，设置恢复普通窗口层级。")
+    }
+
+    func present(on screen: NSScreen? = nil, source: String, content: () -> LeapSettingsRootView) {
+        let target = resolveScreen(preferredDisplayID: screen?.leapDisplayID)
+        let isNew = panel == nil
+        let panel = panel ?? makePanel(content: content())
+        self.panel = panel
+        show(panel, on: target, source: source, isNew: isNew)
+    }
+
+    private func makePanel(content: LeapSettingsRootView) -> SettingsPanel {
+        let panel = SettingsPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 560),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "设置"
+        // 保留系统窗口按钮，让侧栏背景延伸到其下方；窗口名称仅供系统识别。
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        // macOS 的紧凑工具栏会把侧栏边界下移；统一样式才能将系统按钮融入完整侧栏。
+        panel.toolbarStyle = .unified
+        panel.titlebarSeparatorStyle = .none
+        panel.isReleasedWhenClosed = false
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.hidesOnDeactivate = false
+        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .canJoinAllApplications]
+        panel.setAccessibilityIdentifier("settings.window")
+        let hostingView = NSHostingView(rootView: content)
+        // 内容只提供最小尺寸，默认尺寸和用户缩放后的尺寸仍由面板管理。
+        hostingView.sizingOptions = [.minSize]
+        panel.contentView = hostingView
+        // 限制内容尺寸，保证侧栏与右侧现有控件在缩小时仍可操作。
+        panel.contentMinSize = NSSize(width: 860, height: 500)
+        panel.reopenRequested = { [weak self, weak panel] in
+            guard let self, let panel else { return }
+            // 已持有焦点时只更新层级，避免重复交接并保留选中的设置页。
+            panel.level = .floating
+            logger.debug("设置快捷键已确认当前面板，保留页面与键盘焦点。")
         }
+        return panel
     }
 
-    private func configure(_ window: NSWindow) {
-        window.setAccessibilityIdentifier("settings.window")
-        // 在成为活动窗口时移到当前 Space，而不是让系统切换到旧 Space。
-        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+    private func show(_ panel: SettingsPanel, on screen: NSScreen?, source: String, isNew: Bool) {
+        let wasOnActiveSpace = panel.isOnActiveSpace
+        panel.level = .floating
+        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .canJoinAllApplications]
+        if panel.isMiniaturized { panel.deminiaturize(nil) }
+        position(panel, on: screen, preservePosition: !isNew && wasOnActiveSpace)
+        // 与启动器一致：只让非激活面板取得键盘焦点。激活应用会离开其他应用的全屏 Space。
+        panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
+        logger.debug(
+            "设置面板已展示：入口=\(source)，屏幕=\(screen?.localizedName ?? "未知")，"
+                + "当前空间=\(panel.isOnActiveSpace)，键盘焦点=\(panel.isKeyWindow)。"
+        )
     }
 
-    private func position(_ window: NSWindow, on screen: NSScreen?) {
+    private func resolveScreen(preferredDisplayID: CGDirectDisplayID?) -> NSScreen? {
+        if let preferredDisplayID,
+           let screen = NSScreen.screens.first(where: { $0.leapDisplayID == preferredDisplayID }) {
+            return screen
+        }
+        let mouseScreen = NSScreen.leapScreen(containing: NSEvent.mouseLocation)
+        let displayID = WindowDisplayResolver.frontmostWindowDisplayID(fallbackDisplayID: mouseScreen?.leapDisplayID)
+        if let displayID,
+           let screen = NSScreen.screens.first(where: { $0.leapDisplayID == displayID }) {
+            return screen
+        }
+        return mouseScreen ?? NSScreen.main
+    }
+
+    private func position(_ panel: NSPanel, on screen: NSScreen?, preservePosition: Bool) {
         guard let screen else {
-            logger.debug("设置窗口未指定屏幕，使用系统默认位置。")
+            logger.error("无法确定设置窗口的目标屏幕，保留现有位置。")
             return
         }
-        guard window.screen?.leapDisplayID != screen.leapDisplayID || !window.isOnActiveSpace else { return }
+        guard !preservePosition || panel.screen?.leapDisplayID != screen.leapDisplayID else { return }
         let visible = screen.visibleFrame
-        guard visible.width > 0, visible.height > 0 else {
+        guard visible.width.isFinite, visible.height.isFinite, visible.width > 0, visible.height > 0 else {
             logger.error("无法定位设置窗口：目标屏幕可用范围无效。")
             return
         }
         // 只调整位置，不覆盖用户已有的窗口尺寸。
-        window.setFrameOrigin(NSPoint(
-            x: max(visible.minX, visible.midX - window.frame.width / 2),
-            y: max(visible.minY, visible.midY - window.frame.height / 2)
+        panel.setFrameOrigin(NSPoint(
+            x: max(visible.minX, visible.midX - panel.frame.width / 2),
+            y: max(visible.minY, visible.midY - panel.frame.height / 2)
         ))
-        logger.debug("设置窗口已定位到启动器屏幕：\(screen.localizedName)。")
     }
 }
 
-struct SettingsWindowRegistration: NSViewRepresentable {
-    let presenter: SettingsWindowPresenter
+private final class SettingsPanel: NSPanel {
+    private static let logger = YQLogger(label: "com.padding.leap/settings-window")
+    var reopenRequested: (() -> Void)?
+    override var canBecomeKey: Bool { true }
+    // 全屏应用继续作为主应用，设置面板独立接收键盘输入，避免系统切回 Leap 的桌面。
+    override var canBecomeMain: Bool { false }
 
-    func makeNSView(context: Context) -> RegistrationView {
-        RegistrationView(presenter: presenter)
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if isKeyWindow, attachedSheet == nil, event.type == .keyDown, modifiers == .command {
+            // 自建面板的关闭和重开快捷键在窗口内处理，不依赖 SwiftUI 场景的窗口注册。
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "w":
+                performClose(nil)
+                return true
+            case ",":
+                reopenRequested?()
+                return true
+            default:
+                break
+            }
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
-    func updateNSView(_ nsView: RegistrationView, context: Context) {}
-
-    final class RegistrationView: NSView {
-        private let presenter: SettingsWindowPresenter
-
-        init(presenter: SettingsWindowPresenter) {
-            self.presenter = presenter
-            super.init(frame: .zero)
-        }
-
-        required init?(coder: NSCoder) { return nil }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if let window { presenter.register(window) }
+    override func resignKey() {
+        super.resignKey()
+        // 等焦点交接完成再降层，避免输入框切换或原生 sheet 暂时接管焦点时误降层。
+        Task { @MainActor [weak self] in
+            guard let self, !isKeyWindow, attachedSheet == nil, level != .normal else { return }
+            level = .normal
+            Self.logger.debug("设置失去键盘焦点，已恢复普通窗口层级。")
         }
     }
 }

@@ -311,7 +311,8 @@ final class PluginInteractionUITests: XCTestCase {
         let settings = app.buttons["launcher.settingsButton"]
         XCTAssertTrue(settings.exists)
         settings.click()
-        XCTAssertTrue(app.windows["settings.window"].waitForExistence(timeout: 10), app.debugDescription)
+        let settingsWindow = app.descendants(matching: .any)["settings.window"].firstMatch
+        XCTAssertTrue(settingsWindow.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons["plugin.backButton"].exists)
     }
 

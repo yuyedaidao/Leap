@@ -2,9 +2,11 @@ import AppKit
 import LeapCore
 import SwiftUI
 import UniformTypeIdentifiers
+import YQLogger
 
 struct PluginSettingsPage: View {
     let installation: PluginInstallationModel
+    @Binding var selectedPluginID: String?
 
     @State private var isImporterPresented = false
     @State private var isUninstallConfirmationPresented = false
@@ -12,9 +14,10 @@ struct PluginSettingsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PluginSettingsHeader(requestInstall: { isImporterPresented = true })
-            PluginList(
+            PluginSettingsBrowser(
                 plugins: installation.plugins,
+                selectedPluginID: $selectedPluginID,
+                requestInstall: { isImporterPresented = true },
                 requestUpdate: { isImporterPresented = true },
                 requestUninstall: {
                     pluginPendingUninstall = $0
@@ -100,6 +103,42 @@ struct PluginSettingsPage: View {
     }
 }
 
+/// 只保存插件 ID，更新后从最新目录取详情，避免把旧清单快照留在页面中。
+private struct PluginSettingsBrowser: View {
+    let plugins: [InstalledPluginDescriptor]
+    @Binding var selectedPluginID: String?
+    let requestInstall: () -> Void
+    let requestUpdate: () -> Void
+    let requestUninstall: (InstalledPluginDescriptor) -> Void
+
+    private static let logger = YQLogger(label: "com.padding.leap/plugin-details")
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let plugin = plugins.first(where: { $0.id == selectedPluginID }) {
+                PluginDetailsView(
+                    plugin: plugin,
+                    requestBack: { selectedPluginID = nil },
+                    requestUpdate: requestUpdate,
+                    requestUninstall: { requestUninstall(plugin) }
+                )
+                .id(plugin.id)
+            } else {
+                PluginSettingsHeader(requestInstall: requestInstall)
+                PluginList(
+                    plugins: plugins,
+                    requestDetails: {
+                        selectedPluginID = $0
+                        Self.logger.debug("已打开插件详情：\($0)。")
+                    },
+                    requestUpdate: requestUpdate,
+                    requestUninstall: requestUninstall
+                )
+            }
+        }
+    }
+}
+
 private struct PluginSettingsHeader: View {
     let requestInstall: () -> Void
 
@@ -121,6 +160,7 @@ private struct PluginSettingsHeader: View {
 
 private struct PluginList: View {
     let plugins: [InstalledPluginDescriptor]
+    let requestDetails: (String) -> Void
     let requestUpdate: () -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
 
@@ -136,6 +176,7 @@ private struct PluginList: View {
             List(plugins) { plugin in
                 PluginRow(
                     plugin: plugin,
+                    requestDetails: { requestDetails(plugin.id) },
                     requestUpdate: requestUpdate,
                     requestUninstall: requestUninstall
                 )
@@ -147,39 +188,65 @@ private struct PluginList: View {
 
 private struct PluginRow: View {
     let plugin: InstalledPluginDescriptor
+    let requestDetails: () -> Void
     let requestUpdate: () -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            PluginIcon(plugin: plugin)
-                .frame(width: 32, height: 32)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(plugin.manifest.name)
-                Text(
-                    "\(plugin.manifest.version) · \(plugin.manifest.runtime.rawValue) · " +
-                        "\(plugin.manifest.commands.count) 个命令"
-                )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Button(action: requestDetails) {
+                HStack(spacing: 12) {
+                    PluginIcon(plugin: plugin)
+                        .frame(width: 32, height: 32)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(plugin.manifest.name)
+                        Text(
+                            "\(plugin.manifest.version) · \(plugin.manifest.runtime.rawValue) · " +
+                                "\(plugin.manifest.commands.count) 个命令"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
             }
-            Spacer()
-            if plugin.origin == .official {
+            .buttonStyle(.plain)
+            .accessibilityLabel("查看 \(plugin.manifest.name) 详情")
+            .accessibilityIdentifier("settings.pluginDetails.\(plugin.id)")
+            PluginManagementActions(
+                origin: plugin.origin, requestUpdate: requestUpdate,
+                requestUninstall: { requestUninstall(plugin) }
+            )
+        }
+    }
+}
+
+struct PluginManagementActions: View {
+    let origin: InstalledPluginDescriptor.Origin
+    let requestUpdate: () -> Void
+    let requestUninstall: () -> Void
+
+    var body: some View {
+        HStack {
+            if origin == .official {
                 Text("官方内置")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .help("随 Leap 更新，无需单独安装。")
             } else {
                 Button("更新", action: requestUpdate)
-                Button("卸载", role: .destructive) {
-                    requestUninstall(plugin)
-                }
+                Button("卸载", role: .destructive, action: requestUninstall)
             }
         }
+        // List 内的管理按钮独立响应，不让安装或卸载操作同时打开详情。
+        .buttonStyle(.borderless)
     }
 }
 
-private struct PluginIcon: View {
+struct PluginIcon: View {
     let plugin: InstalledPluginDescriptor
 
     var body: some View {

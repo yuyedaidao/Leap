@@ -116,15 +116,15 @@ final class PluginTemplateGeneratorUITests: XCTestCase {
             try? FileManager.default.removeItem(at: support)
         }
         app.launch()
-        // 原生设置快捷键避免把非激活启动器的焦点交接混入插件来源验证。
-        app.activate()
-        app.typeKey(",", modifierFlags: .command)
-        XCTAssertTrue(app.windows["settings.window"].waitForExistence(timeout: 10), app.debugDescription)
-        let plugins = app.buttons["插件"]
+        // 使用实际设置入口，插件来源验证无需依赖应用菜单的激活状态。
+        app.buttons["launcher.settingsButton"].click()
+        let settings = app.descendants(matching: .any)["settings.window"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 10), app.debugDescription)
+        let plugins = app.descendants(matching: .any)["settings.section.plugins"].firstMatch
         XCTAssertTrue(plugins.waitForExistence(timeout: 5))
         plugins.click()
         XCTAssertTrue(app.staticTexts["官方内置"].waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(app.staticTexts["插件模板生成器"].exists)
+        XCTAssertTrue(app.buttons["settings.pluginDetails.\(AppPaths.templateGeneratorID)"].exists)
         XCTAssertFalse(app.buttons["更新"].exists)
         XCTAssertFalse(app.buttons["卸载"].exists)
         XCTAssertTrue(app.buttons["settings.installPluginButton"].exists)

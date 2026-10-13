@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let launcherPanelController = LauncherPanelController(model: model)
             self.launcherPanelController = launcherPanelController
             launcherPanelController.settingsRequested = { [weak self] screen in
-                self?.settingsWindowPresenter.prepare(on: screen)
+                self?.showSettings(on: screen, source: "启动器")
             }
 
             Task { @MainActor in
@@ -62,6 +62,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         } catch {
             logger.error("无法初始化 Leap 数据目录：\(error.localizedDescription)。")
+        }
+    }
+
+    func showSettings(on screen: NSScreen? = nil, source: String) {
+        settingsWindowPresenter.present(on: screen, source: source) {
+            LeapSettingsRootView(appDelegate: self)
         }
     }
 

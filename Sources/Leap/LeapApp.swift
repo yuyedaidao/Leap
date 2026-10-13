@@ -11,6 +11,20 @@ struct LeapApp: App {
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
+            LeapSettingsCommands(appDelegate: appDelegate)
+        }
+    }
+}
+
+private struct LeapSettingsCommands: Commands {
+    let appDelegate: AppDelegate
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("设置…") {
+                appDelegate.showSettings(source: "菜单或快捷键")
+            }
+            .keyboardShortcut(",", modifiers: .command)
         }
     }
 }

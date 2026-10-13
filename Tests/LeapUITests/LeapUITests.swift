@@ -182,7 +182,9 @@ final class LeapUITests: XCTestCase {
         let settings = app.buttons["launcher.settingsButton"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.click()
-        let pluginTab = app.buttons["插件"]
+        // 普通桌面回归显式交给测试应用，避免 XCUITest 将非激活面板的控件绑定到后台应用。
+        app.activate()
+        let pluginTab = app.descendants(matching: .any)["settings.section.plugins"].firstMatch
         XCTAssertTrue(pluginTab.waitForExistence(timeout: 5))
         pluginTab.click()
         XCTAssertTrue(app.buttons["settings.installPluginButton"].waitForExistence(timeout: 5))
@@ -192,7 +194,11 @@ final class LeapUITests: XCTestCase {
     func testSettingsReopensAndPreservesSize() throws {
         let support = FileManager.default.temporaryDirectory.appendingPathComponent("LeapSettingsUI-\(UUID())")
         let app = XCUIApplication()
-        app.launchArguments += ["-leap-testing-support-directory", support.path]
+        // 参数域用非 Data 值让快捷键存储回退默认组合，不写入用户的实际偏好。
+        app.launchArguments += [
+            "-leap-testing-support-directory", support.path,
+            "-globalHotKeyShortcut", "testing-default"
+        ]
         addTeardownBlock {
             app.terminate()
             try? FileManager.default.removeItem(at: support)
@@ -203,19 +209,23 @@ final class LeapUITests: XCTestCase {
         XCTAssertTrue(button.waitForExistence(timeout: 5))
         let launcherFrame = launcher.frame
         button.click()
-        let settings = app.windows["settings.window"]
+        let settings = app.descendants(matching: .any)["settings.window"].firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 5), app.debugDescription)
         let original = settings.frame
-        XCTAssertTrue(original.intersects(launcherFrame), "设置应在启动器所在屏幕打开。")
+        XCTAssertTrue(
+            original.intersects(launcherFrame),
+            "设置应在启动器所在屏幕打开。设置=\(original)，启动器=\(launcherFrame)。"
+        )
         settings.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertFalse(app.textFields["launcher.searchField"].exists, "关闭设置不应自动弹出启动器。")
-        // 用原生设置快捷键重开，避免把全局启动器快捷键的焦点交接混入设置窗口回归。
+        // 关闭后通过应用快捷键重开，验证不同入口复用同一个设置面板。
+        app.activate()
         app.typeKey(",", modifierFlags: .command)
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         XCTAssertTrue(settings.buttons[XCUIIdentifierCloseWindow].isHittable, "重新打开的设置窗口应位于前台并可交互。")
         XCTAssertEqual(settings.frame.width, original.width, accuracy: 2)
         XCTAssertEqual(settings.frame.height, original.height, accuracy: 2)
-        XCTAssertTrue(settings.frame.intersects(launcherFrame), "复用设置窗口仍应保留屏幕归属。")
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "settings.window").count, 1)
     }
 
     @MainActor

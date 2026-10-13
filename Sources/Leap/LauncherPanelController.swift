@@ -162,9 +162,9 @@ final class LauncherPanelController {
                     return
                 }
                 Self.resize(panel, toContentHeight: height, keepWithinScreen: model?.interaction != nil)
-            } hideForSettings: { [weak self, weak panel] in
+            } showSettings: { [weak self, weak panel] in
                 let screen = panel?.screen
-                // 先隐藏启动器，再激活设置，避免启动器退出时打断设置的焦点交接。
+                // 先隐藏启动器，再交给设置面板接管键盘焦点。
                 panel?.orderOut(nil)
                 self?.settingsRequested?(screen)
             }

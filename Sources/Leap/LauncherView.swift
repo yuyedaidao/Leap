@@ -5,7 +5,7 @@ import SwiftUI
 struct LauncherView: View {
     let model: LauncherModel
     private let contentHeightDidChange: (CGFloat) -> Void
-    private let hideForSettings: () -> Void
+    private let showSettings: () -> Void
 
     @FocusState private var isSearchFieldFocused: Bool
     @State private var selectedRecentItemID: LauncherItem.ID?
@@ -13,11 +13,11 @@ struct LauncherView: View {
     init(
         model: LauncherModel,
         contentHeightDidChange: @escaping (CGFloat) -> Void = { _ in },
-        hideForSettings: @escaping () -> Void = {}
+        showSettings: @escaping () -> Void = {}
     ) {
         self.model = model
         self.contentHeightDidChange = contentHeightDidChange
-        self.hideForSettings = hideForSettings
+        self.showSettings = showSettings
     }
 
     var body: some View {
@@ -27,7 +27,7 @@ struct LauncherView: View {
             LauncherSearchHeader(
                 query: $model.query,
                 isFocused: $isSearchFieldFocused,
-                hideForSettings: hideForSettings,
+                showSettings: showSettings,
                 submit: activateSelectedItem,
                 moveSearchSelection: moveSearchSelection,
                 moveRecentSelection: moveRecentSelection,
@@ -55,7 +55,7 @@ struct LauncherView: View {
                 }
             }
         }
-        .padding(24)
+        .padding(20)
         .frame(width: 800)
         // 整个启动器共用一层原生玻璃，避免列表和插件内容叠加玻璃影响可读性。
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
@@ -130,10 +130,9 @@ struct LauncherView: View {
 }
 
 private struct LauncherSearchHeader: View {
-    @Environment(\.openSettings) private var openSettings
     @Binding var query: String
     let isFocused: FocusState<Bool>.Binding
-    let hideForSettings: () -> Void
+    let showSettings: () -> Void
     let submit: () -> Void
     let moveSearchSelection: (Int) -> Bool
     let moveRecentSelection: (Int) -> Bool
@@ -189,8 +188,7 @@ private struct LauncherSearchHeader: View {
 
                 Button {
                     exitInteraction()
-                    hideForSettings()
-                    openSettings()
+                    showSettings()
                 } label: {
                     let radius: CGFloat = 20
                     let bWidth = radius * 2
@@ -240,7 +238,7 @@ private struct LauncherSearchHeaderPreview: View {
         LauncherSearchHeader(
             query: $query,
             isFocused: $isFocused,
-            hideForSettings: {},
+            showSettings: {},
             submit: {},
             moveSearchSelection: { _ in false },
             moveRecentSelection: { _ in false }
