@@ -22,7 +22,7 @@ public struct PluginInstaller {
 
         public var errorDescription: String? {
             switch self {
-            case .officialPluginReserved: "官方内置插件随 Leap 更新，不能本地覆盖或卸载。"
+            case .officialPluginReserved: "内置插件随 Leap 更新，不能本地覆盖或卸载。"
             case .confirmationRequired: "插件内容尚未获得确认。"
             case .managedDirectoryEscape: "受管插件目录不安全。"
             }

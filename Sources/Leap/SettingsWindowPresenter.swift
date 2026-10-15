@@ -40,8 +40,7 @@ final class SettingsWindowPresenter {
             defer: false
         )
         panel.title = "设置"
-        // 保留系统窗口按钮，让侧栏背景延伸到其下方；窗口名称仅供系统识别。
-        panel.titleVisibility = .hidden
+        // 保留原生标题展示，让 SwiftUI 的 navigationTitle 随详情页更新。
         panel.titlebarAppearsTransparent = true
         // macOS 的紧凑工具栏会把侧栏边界下移；统一样式才能将系统按钮融入完整侧栏。
         panel.toolbarStyle = .unified

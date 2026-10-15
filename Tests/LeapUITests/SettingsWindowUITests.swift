@@ -5,6 +5,24 @@ import XCTest
 
 final class SettingsWindowUITests: XCTestCase {
     @MainActor
+    func testDetailPagesUseSystemNavigationTitles() {
+        let app = launchForSettingsTest()
+        app.buttons["launcher.settingsButton"].click()
+        app.activate()
+        let settings = app.descendants(matching: .any)["settings.window"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        let sections = [("general", "通用"), ("plugins", "插件"), ("data", "数据与隐私"), ("about", "关于")]
+        for (section, title) in sections {
+            settings.descendants(matching: .any)["settings.section.\(section)"].firstMatch.click()
+            let updated = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "title == %@", title), object: settings
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 5), .completed)
+        }
+        attachScreenshot(settings, name: "详情页系统导航标题")
+    }
+
+    @MainActor
     func testWindowControlsSidebarToggleAndDragging() {
         let app = launchForSettingsTest()
         app.buttons["launcher.settingsButton"].click()
@@ -19,7 +37,7 @@ final class SettingsWindowUITests: XCTestCase {
         XCTAssertTrue(close.isHittable)
         XCTAssertTrue(minimize.isHittable)
         XCTAssertTrue(toggle.isHittable)
-        XCTAssertFalse(settings.staticTexts["设置"].exists, "窗口名称仅供系统识别，顶部不显示标题。")
+        XCTAssertEqual(settings.title, "通用")
         XCTAssertLessThan(close.frame.maxX, sidebar.frame.maxX)
         XCTAssertLessThanOrEqual(toggle.frame.maxX, sidebar.frame.maxX + 8)
         let general = app.descendants(matching: .any)["settings.section.general"].firstMatch
@@ -223,5 +241,44 @@ final class SettingsWindowUITests: XCTestCase {
         screenshot.name = name
         screenshot.lifetime = .keepAlways
         add(screenshot)
+    }
+}
+
+extension SettingsWindowUITests {
+    @MainActor
+    func testPluginToolbarUsesNativeSearchAndAddButton() {
+        let app = launchForSettingsTest()
+        app.buttons["launcher.settingsButton"].click()
+        app.activate()
+        let settings = app.descendants(matching: .any)["settings.window"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.descendants(matching: .any)["settings.section.plugins"].firstMatch.click()
+        let search = settings.toolbars.searchFields.firstMatch
+        let install = settings.toolbars.buttons["settings.installPluginButton"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertTrue(search.isHittable)
+        XCTAssertTrue(install.isHittable)
+        XCTAssertEqual(install.label, "安装插件")
+        XCTAssertLessThanOrEqual(install.frame.maxX, search.frame.minX)
+        attachScreenshot(settings, name: "插件原生搜索与安装工具栏")
+        resize(settings, by: CGVector(dx: -300, dy: -300))
+        XCTAssertEqual(settings.frame.width, 860, accuracy: 2)
+        XCTAssertTrue(search.isHittable)
+        XCTAssertTrue(install.isHittable)
+        XCTAssertLessThanOrEqual(search.frame.maxX, settings.frame.maxX)
+        let toggle = settings.toolbars.buttons.firstMatch
+        toggle.click()
+        let general = settings.descendants(matching: .any)["settings.section.general"].firstMatch
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == false"), object: general)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        XCTAssertTrue(search.isHittable)
+        XCTAssertTrue(install.isHittable)
+        attachScreenshot(settings, name: "最小窗口侧栏收起后的插件工具栏")
+        toggle.click()
+        for section in ["general", "data", "about"] {
+            settings.descendants(matching: .any)["settings.section.\(section)"].firstMatch.click()
+            XCTAssertFalse(search.exists)
+            XCTAssertFalse(install.exists)
+        }
     }
 }

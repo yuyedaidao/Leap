@@ -6,9 +6,7 @@ struct DataSettingsPage: View {
     @State private var isClearHistoryConfirmationPresented = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("数据与隐私")
-                .font(.title2.bold())
+        Form {
             LocalDataSection(
                 coordinator: coordinator,
                 requestClearHistory: { isClearHistoryConfirmationPresented = true }
@@ -18,9 +16,8 @@ struct DataSettingsPage: View {
                 Label(message, systemImage: "info.circle")
                     .foregroundStyle(.secondary)
             }
-            Spacer()
         }
-        .padding(24)
+        .formStyle(.grouped)
         .confirmationDialog(
             "清除最近使用？",
             isPresented: $isClearHistoryConfirmationPresented,
@@ -39,7 +36,7 @@ private struct LocalDataSection: View {
     let requestClearHistory: () -> Void
 
     var body: some View {
-        GroupBox("本地数据") {
+        Section("本地数据") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Leap 的最近使用记录和系统应用索引仅保存在本机。清除最近记录不会删除插件或其他偏好。")
                     .foregroundStyle(.secondary)
@@ -61,7 +58,7 @@ private struct LocalDataSection: View {
 
 private struct PrivacySection: View {
     var body: some View {
-        GroupBox("隐私") {
+        Section("隐私") {
             Text("Leap 宿主不会收集遥测，也不提供账号或云同步。已确认插件按其自身逻辑运行，请只安装可信来源的插件。")
                 .foregroundStyle(.secondary)
                 .padding(.vertical, 4)
@@ -81,19 +78,24 @@ struct AboutSettingsPage: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Image(systemName: "bolt.circle.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.tint)
-            Text("Leap")
-                .font(.largeTitle.bold())
-            Text(versionDescription)
-                .foregroundStyle(.secondary)
-            Text("本版不提供远程检查、下载或自动安装更新。")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        HStack(content: {
             Spacer()
-        }
+            VStack(alignment: .leading, spacing: 18) {
+                Spacer()
+                Image("AppIcon")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.tint)
+                Text("Leap")
+                    .font(.largeTitle.bold())
+                Text(versionDescription)
+                    .foregroundStyle(.secondary)
+                Text("本版不提供远程检查、下载或自动安装更新。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            Spacer()
+        })
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(32)
     }

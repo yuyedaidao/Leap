@@ -123,7 +123,7 @@ final class PluginTemplateGeneratorUITests: XCTestCase {
         let plugins = app.descendants(matching: .any)["settings.section.plugins"].firstMatch
         XCTAssertTrue(plugins.waitForExistence(timeout: 5))
         plugins.click()
-        XCTAssertTrue(app.staticTexts["官方内置"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["内置"].waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.buttons["settings.pluginDetails.\(AppPaths.templateGeneratorID)"].exists)
         XCTAssertFalse(app.buttons["更新"].exists)
         XCTAssertFalse(app.buttons["卸载"].exists)

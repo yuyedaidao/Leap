@@ -11,7 +11,6 @@ struct GeneralSettingsPage: View {
             GlobalShortcutSection(coordinator: coordinator)
         }
         .formStyle(.grouped)
-        .padding(24)
         .onAppear(perform: coordinator.refreshLoginItemState)
     }
 }

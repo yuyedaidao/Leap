@@ -1,3 +1,4 @@
+import LeapCore
 import SwiftUI
 import YQLogger
 
@@ -43,23 +44,48 @@ private struct LeapSettingsView: View {
     @State private var selectedPluginID: String?
     private static let logger = YQLogger(label: "com.padding.leap/settings-navigation")
 
+    private var selectedPlugin: InstalledPluginDescriptor? {
+        coordinator.pluginInstallation.plugins.first { $0.id == selectedPluginID }
+    }
+
+    private var detailTitle: String {
+        if selectedSection == .plugins, let selectedPlugin {
+            return selectedPlugin.manifest.name
+        }
+        return (selectedSection ?? .general).title
+    }
+
     var body: some View {
         NavigationSplitView {
             SettingsSidebar(selection: $selectedSection)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
         } detail: {
-            switch selectedSection ?? .general {
-            case .general:
-                GeneralSettingsPage(coordinator: coordinator, appearance: appearance)
-            case .plugins:
-                PluginSettingsPage(
-                    installation: coordinator.pluginInstallation,
-                    selectedPluginID: $selectedPluginID
-                )
-            case .data:
-                DataSettingsPage(coordinator: coordinator)
-            case .about:
-                AboutSettingsPage()
+            Group {
+                switch selectedSection ?? .general {
+                case .general:
+                    GeneralSettingsPage(coordinator: coordinator, appearance: appearance)
+                case .plugins:
+                    PluginSettingsPage(
+                        installation: coordinator.pluginInstallation,
+                        selectedPluginID: $selectedPluginID
+                    )
+                case .data:
+                    DataSettingsPage(coordinator: coordinator)
+                case .about:
+                    AboutSettingsPage()
+                }
+            }
+            .navigationTitle(detailTitle)
+            .toolbar {
+                if selectedSection == .plugins, selectedPlugin != nil {
+                    ToolbarItem(placement: .navigation) {
+                        Button { selectedPluginID = nil } label: {
+                            Label("返回插件列表", systemImage: "chevron.left")
+                        }
+                        .labelStyle(.iconOnly)
+                        .accessibilityIdentifier("settings.pluginDetails.back")
+                    }
+                }
             }
         }
         .navigationSplitViewStyle(.balanced)

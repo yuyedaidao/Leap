@@ -111,22 +111,24 @@ private struct PluginSettingsBrowser: View {
     let requestUpdate: () -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
 
+    @State private var query = PluginLibraryQuery()
+
     private static let logger = YQLogger(label: "com.padding.leap/plugin-details")
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if let plugin = plugins.first(where: { $0.id == selectedPluginID }) {
-                PluginDetailsView(
-                    plugin: plugin,
-                    requestBack: { selectedPluginID = nil },
-                    requestUpdate: requestUpdate,
-                    requestUninstall: { requestUninstall(plugin) }
-                )
-                .id(plugin.id)
-            } else {
-                PluginSettingsHeader(requestInstall: requestInstall)
+        if let plugin = plugins.first(where: { $0.id == selectedPluginID }) {
+            PluginDetailsView(
+                plugin: plugin,
+                requestUpdate: requestUpdate,
+                requestUninstall: { requestUninstall(plugin) }
+            )
+            .id(plugin.id)
+        } else {
+            VStack(alignment: .leading, spacing: 16) {
+                PluginSourcePicker(source: $query.source)
                 PluginList(
                     plugins: plugins,
+                    query: query,
                     requestDetails: {
                         selectedPluginID = $0
                         Self.logger.debug("已打开插件详情：\($0)。")
@@ -135,59 +137,107 @@ private struct PluginSettingsBrowser: View {
                     requestUninstall: requestUninstall
                 )
             }
+            .searchable(text: $query.searchText, placement: .toolbar, prompt: "搜索插件或命令")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("安装插件", systemImage: "plus", action: requestInstall)
+                        .labelStyle(.iconOnly)
+                        .help("安装插件")
+                        .accessibilityIdentifier("settings.installPluginButton")
+                }
+            }
         }
     }
 }
 
-private struct PluginSettingsHeader: View {
-    let requestInstall: () -> Void
+private struct PluginSourcePicker: View {
+    @Binding var source: PluginLibraryQuery.Source
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("本地插件")
-                    .font(.title2.bold())
-                Text("官方插件随 Leap 提供；本地插件需安装确认后使用。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        Picker("", selection: $source) {
+            ForEach(PluginLibraryQuery.Source.allCases, id: \.self) { source in
+                Text(title(for: source))
+                    .tag(source)
             }
-            Spacer()
-            Button("安装本地插件", action: requestInstall)
-                .accessibilityIdentifier("settings.installPluginButton")
+        }
+        .pickerStyle(.segmented)
+        .accessibilityIdentifier("settings.pluginSource")
+    }
+
+    private func title(for source: PluginLibraryQuery.Source) -> String {
+        switch source {
+        case .all: "全部"
+        case .local: "自定义"
+        case .official: "内置"
         }
     }
 }
 
 private struct PluginList: View {
     let plugins: [InstalledPluginDescriptor]
+    let query: PluginLibraryQuery
     let requestDetails: (String) -> Void
     let requestUpdate: () -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
 
     var body: some View {
-        if plugins.isEmpty {
+        let visible = plugins.filter(query.includes)
+        let local = visible.filter { $0.origin == .local }
+        let official = visible.filter { $0.origin == .official }
+        if visible.isEmpty {
             ContentUnavailableView(
-                "没有已安装插件",
-                systemImage: "puzzlepiece.extension",
-                description: Text("选择插件目录后，Leap 会验证清单并复制受管副本。")
+                query.term.isEmpty ? "暂无此类插件" : "没有匹配的插件",
+                systemImage: query.term.isEmpty ? "puzzlepiece.extension" : "magnifyingglass",
+                description: Text(query.term.isEmpty ? "可安装本地插件，或切换来源查看其他插件。" : "尝试其他关键词或切换插件来源。")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityIdentifier("settings.pluginEmptyState")
         } else {
-            List(plugins) { plugin in
-                PluginRow(
-                    plugin: plugin,
-                    requestDetails: { requestDetails(plugin.id) },
-                    requestUpdate: requestUpdate,
-                    requestUninstall: requestUninstall
-                )
+            List {
+                if !local.isEmpty {
+                    Section {
+                        ForEach(local) { plugin in
+                            row(plugin)
+                        }
+                    } header: {
+                        Text("自定义 · \(local.count)")
+                            .accessibilityIdentifier("settings.pluginGroup.local")
+                    }
+                }
+                if !official.isEmpty {
+                    Section {
+                        ForEach(official) { plugin in
+                            row(plugin)
+                        }
+                    } header: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("内置 · \(official.count)")
+                                .accessibilityIdentifier("settings.pluginGroup.official")
+                            Text("随 Leap 提供，随应用更新")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
-            .listStyle(.inset)
+            .listStyle(.plain)
         }
+    }
+
+    private func row(_ plugin: InstalledPluginDescriptor) -> some View {
+        PluginRow(
+            plugin: plugin,
+            matchingCommands: query.matchingCommands(in: plugin).map(\.title),
+            requestDetails: { requestDetails(plugin.id) },
+            requestUpdate: requestUpdate,
+            requestUninstall: requestUninstall
+        )
     }
 }
 
 private struct PluginRow: View {
     let plugin: InstalledPluginDescriptor
+    let matchingCommands: [String]
     let requestDetails: () -> Void
     let requestUpdate: () -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
@@ -201,12 +251,20 @@ private struct PluginRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(plugin.manifest.name)
                         Text(
-                            "\(plugin.manifest.version) · \(plugin.manifest.runtime.rawValue) · " +
-                                "\(plugin.manifest.commands.count) 个命令"
+                            "\(plugin.manifest.version) · \(plugin.manifest.commands.count) 个命令"
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        if !matchingCommands.isEmpty {
+                            Text("匹配命令：\(matchingCommands.joined(separator: "、"))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .help(matchingCommands.joined(separator: "、"))
+                                .accessibilityIdentifier("settings.pluginMatch.\(plugin.id)")
+                        }
                     }
+                    .lineLimit(1)
                     Spacer()
                     Image(systemName: "chevron.right")
                         .foregroundStyle(.secondary)
@@ -214,12 +272,28 @@ private struct PluginRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("查看 \(plugin.manifest.name) 详情")
-            .accessibilityIdentifier("settings.pluginDetails.\(plugin.id)")
-            PluginManagementActions(
-                origin: plugin.origin, requestUpdate: requestUpdate,
-                requestUninstall: { requestUninstall(plugin) }
+            .accessibilityLabel(
+                matchingCommands.isEmpty
+                    ? "查看 \(plugin.manifest.name) 详情"
+                    : "查看 \(plugin.manifest.name) 详情，匹配命令：\(matchingCommands.joined(separator: "、"))"
             )
+            .accessibilityIdentifier("settings.pluginDetails.\(plugin.id)")
+            if plugin.origin == .local {
+                Menu {
+                    Button("从本地目录更新…", action: requestUpdate)
+                    Button("卸载", role: .destructive) { requestUninstall(plugin) }
+                } label: {
+                    Label("管理插件", systemImage: "ellipsis")
+                        .labelStyle(.iconOnly)
+                }
+                // 保留系统按钮的边框与点击范围，避免菜单热区缩成省略号图标。
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .controlSize(.regular)
+                .help("管理插件")
+                .accessibilityLabel("管理 \(plugin.manifest.name)")
+                .accessibilityIdentifier("settings.pluginMenu.\(plugin.id)")
+            }
         }
     }
 }
@@ -232,7 +306,7 @@ struct PluginManagementActions: View {
     var body: some View {
         HStack {
             if origin == .official {
-                Text("官方内置")
+                Text("内置")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .help("随 Leap 更新，无需单独安装。")

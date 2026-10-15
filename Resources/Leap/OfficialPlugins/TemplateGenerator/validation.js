@@ -99,7 +99,7 @@
       if (data[key].includes('\0')) throw new Error('高级设置包含无效字符。');
     }
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(data.id) || data.id.includes('..')) throw new Error('插件 ID 仅支持字母、数字、点、下划线和短横线，不能包含连续的 ..。');
-    if (data.id === 'com.padding.leap.template-generator') throw new Error('该插件 ID 为官方内置插件保留，请使用其他 ID。');
+    if (data.id === 'com.padding.leap.template-generator') throw new Error('该插件 ID 为内置插件保留，请使用其他 ID。');
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(data.commandID)) throw new Error('命令 ID 仅支持字母、数字、点、下划线和短横线。');
     if (!/^\d+\.\d+\.\d+$/.test(data.version)) throw new Error('版本应为三段数字，例如 1.0.0。');
     if (!['javascript', 'python', 'shell'].includes(data.runtime)) throw new Error('不支持的插件类型。');
