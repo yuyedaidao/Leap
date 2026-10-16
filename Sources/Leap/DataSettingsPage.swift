@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct DataSettingsPage: View {
@@ -82,9 +83,13 @@ struct AboutSettingsPage: View {
             Spacer()
             VStack(alignment: .leading, spacing: 18) {
                 Spacer()
-                Image("AppIcon")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.tint)
+                // AppIcon 是应用图标集，通过系统接口读取打包后的图标。
+                Image(nsImage: NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 48, height: 48)
+                    .accessibilityLabel("Leap 应用图标")
+                    .accessibilityIdentifier("settings.about.appIcon")
                 Text("Leap")
                     .font(.largeTitle.bold())
                 Text(versionDescription)

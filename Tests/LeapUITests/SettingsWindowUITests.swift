@@ -19,7 +19,12 @@ final class SettingsWindowUITests: XCTestCase {
             )
             XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 5), .completed)
         }
-        attachScreenshot(settings, name: "详情页系统导航标题")
+        let appIcon = settings.images["settings.about.appIcon"]
+        XCTAssertTrue(appIcon.waitForExistence(timeout: 5))
+        XCTAssertEqual(appIcon.label, "Leap 应用图标")
+        XCTAssertEqual(appIcon.frame.width, 48, accuracy: 1)
+        XCTAssertEqual(appIcon.frame.height, 48, accuracy: 1)
+        attachScreenshot(settings, name: "关于页应用图标与系统导航标题")
     }
 
     @MainActor
@@ -246,37 +251,92 @@ final class SettingsWindowUITests: XCTestCase {
 
 extension SettingsWindowUITests {
     @MainActor
-    func testPluginToolbarUsesNativeSearchAndAddButton() {
+    func testPluginPickerStaysCenteredWhenWindowWidens() {
         let app = launchForSettingsTest()
         app.buttons["launcher.settingsButton"].click()
         app.activate()
         let settings = app.descendants(matching: .any)["settings.window"].firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.descendants(matching: .any)["settings.section.plugins"].firstMatch.click()
+        let source = settings.toolbars.descendants(matching: .any)["settings.pluginSource"].firstMatch
+        XCTAssertTrue(source.waitForExistence(timeout: 5))
+        for delta in [0, 200, 300] {
+            if delta > 0 { resize(settings, by: CGVector(dx: delta, dy: 0)) }
+            let sidebar = settings.outlines.firstMatch
+            let center = (sidebar.frame.maxX + settings.frame.maxX) / 2
+            attachScreenshot(settings, name: "插件筛选居中 \(Int(settings.frame.width))")
+            XCTAssertEqual(source.frame.midX, center, accuracy: 3, "窗口变宽后筛选仍应位于内容区域中心。")
+        }
+    }
+
+    @MainActor
+    func testRemotePluginInstallerCanValidateAddressAndCancel() {
+        let app = launchForSettingsTest()
+        app.buttons["launcher.settingsButton"].click()
+        app.activate()
+        let settings = app.descendants(matching: .any)["settings.window"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.descendants(matching: .any)["settings.section.plugins"].firstMatch.click()
+        app.toolbars.buttons["settings.installPluginButton"].click()
+        let remote = app.buttons["从远程地址安装"]
+        XCTAssertTrue(remote.waitForExistence(timeout: 5))
+        remote.click()
+        let field = app.textFields["settings.remotePluginAddress"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["settings.remotePluginDownload"].isEnabled)
+        field.click()
+        field.typeText("https://github.com/owner/repo")
+        app.buttons["settings.remotePluginDownload"].click()
+        XCTAssertTrue(app.descendants(matching: .any)["settings.remotePluginError"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["settings.remotePluginCancel"].click()
+        XCTAssertFalse(field.exists)
+        XCTAssertTrue(app.toolbars.buttons["settings.installPluginButton"].isHittable)
+    }
+
+    @MainActor
+    func testPluginToolbarUsesCenteredPickerAndNativeSearch() {
+        let app = launchForSettingsTest()
+        app.buttons["launcher.settingsButton"].click()
+        app.activate()
+        let settings = app.descendants(matching: .any)["settings.window"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.descendants(matching: .any)["settings.section.plugins"].firstMatch.click()
+        let source = settings.toolbars.descendants(matching: .any)["settings.pluginSource"].firstMatch
         let search = settings.toolbars.searchFields.firstMatch
         let install = settings.toolbars.buttons["settings.installPluginButton"]
+        XCTAssertTrue(source.waitForExistence(timeout: 5))
+        XCTAssertTrue(source.isHittable)
+        // 系统分段控件的辅助功能边界不包含工具栏玻璃背景的内边距。
+        XCTAssertGreaterThanOrEqual(source.frame.width, 180)
+        XCTAssertLessThanOrEqual(source.frame.width, 220)
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         XCTAssertTrue(search.isHittable)
         XCTAssertTrue(install.isHittable)
         XCTAssertEqual(install.label, "安装插件")
+        XCTAssertLessThanOrEqual(source.frame.maxX, install.frame.minX)
         XCTAssertLessThanOrEqual(install.frame.maxX, search.frame.minX)
-        attachScreenshot(settings, name: "插件原生搜索与安装工具栏")
+        attachScreenshot(settings, name: "插件中央筛选与系统搜索")
         resize(settings, by: CGVector(dx: -300, dy: -300))
         XCTAssertEqual(settings.frame.width, 860, accuracy: 2)
+        XCTAssertTrue(source.isHittable)
         XCTAssertTrue(search.isHittable)
         XCTAssertTrue(install.isHittable)
         XCTAssertLessThanOrEqual(search.frame.maxX, settings.frame.maxX)
+        XCTAssertLessThanOrEqual(source.frame.maxX, install.frame.minX)
+        attachScreenshot(settings, name: "最小窗口插件工具栏系统搜索")
         let toggle = settings.toolbars.buttons.firstMatch
         toggle.click()
         let general = settings.descendants(matching: .any)["settings.section.general"].firstMatch
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == false"), object: general)
         XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        XCTAssertTrue(source.isHittable)
         XCTAssertTrue(search.isHittable)
         XCTAssertTrue(install.isHittable)
         attachScreenshot(settings, name: "最小窗口侧栏收起后的插件工具栏")
         toggle.click()
         for section in ["general", "data", "about"] {
             settings.descendants(matching: .any)["settings.section.\(section)"].firstMatch.click()
+            XCTAssertFalse(source.exists)
             XCTAssertFalse(search.exists)
             XCTAssertFalse(install.exists)
         }

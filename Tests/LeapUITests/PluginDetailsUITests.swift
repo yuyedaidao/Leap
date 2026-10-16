@@ -285,6 +285,7 @@ extension PluginDetailsUITests {
         let app = launch(support: fixture.support)
         let install = app.toolbars.buttons["settings.installPluginButton"]
         install.click()
+        app.sheets.buttons["settings.installLocalPlugin"].click()
         try choosePluginDirectory(directory, in: app)
         let confirm = app.sheets.buttons["安装 Toolbar Installed Plugin"]
         XCTAssertTrue(confirm.waitForExistence(timeout: 5), app.debugDescription)
@@ -365,7 +366,7 @@ extension PluginDetailsUITests {
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertFalse(app.buttons["settings.pluginDetails.back"].exists)
 
-        let source = app.descendants(matching: .any)["settings.pluginSource"].firstMatch
+        let source = app.toolbars.descendants(matching: .any)["settings.pluginSource"].firstMatch
         source.descendants(matching: .any)["内置"].firstMatch.click()
         XCTAssertTrue(official.exists)
         XCTAssertFalse(local.exists)
@@ -373,6 +374,7 @@ extension PluginDetailsUITests {
         XCTAssertTrue(local.exists)
         XCTAssertFalse(official.exists)
         let search = app.toolbars.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
         search.click()
         search.typeText("ALPHA")
         XCTAssertTrue(local.exists)
@@ -389,7 +391,14 @@ extension PluginDetailsUITests {
         search.typeKey("a", modifierFlags: .command)
         search.typeText("no-matching-plugin")
         XCTAssertTrue(app.descendants(matching: .any)["settings.pluginEmptyState"].firstMatch.exists)
-        XCTAssertTrue(app.toolbars.buttons["settings.installPluginButton"].exists)
+        // 原生搜索激活后，系统可能将安装入口移入工具栏溢出菜单。
+        if !app.toolbars.buttons["settings.installPluginButton"].exists {
+            let overflow = app.toolbars.popUpButtons.firstMatch
+            XCTAssertTrue(overflow.waitForExistence(timeout: 5))
+            overflow.click()
+            XCTAssertTrue(app.menuItems["安装插件"].waitForExistence(timeout: 5))
+            app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        }
         search.click()
         search.typeKey("a", modifierFlags: .command)
         search.typeKey(XCUIKeyboardKey.delete, modifierFlags: [])

@@ -78,11 +78,10 @@ public struct InstalledPluginCatalog {
                 let manifest = try validator.load(from: directory)
                 // 保留旧受管副本，但永远不让同 ID 本地内容冒充官方插件。
                 guard !AppPaths.isOfficialPluginID(manifest.id) else { return nil }
-                let contentDigest = try installer.contentDigest(of: directory)
                 guard directory.lastPathComponent == manifest.id,
                       let record = try installer.readTrustRecord(for: manifest.id),
                       record.version == manifest.version,
-                      record.contentDigest == contentDigest else {
+                      record.contentDigest == (try installer.contentDigest(of: directory, version: record.digestVersion ?? 1)) else {
                     return nil
                 }
                 let iconURL = manifest.icon.map { directory.appendingPathComponent($0) }

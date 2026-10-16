@@ -25,6 +25,7 @@ xcodebuild build -workspace Leap.xcworkspace -scheme Leap-Workspace -destination
 ## SwiftUI 与职责边界
 
 - 优先使用 SwiftUI 原生能力构建界面；仅在 macOS 系统集成确有需要时使用 AppKit。
+- 控件必须优先使用系统实现和默认交互；SwiftUI 已有对应能力时直接使用，不为强制折叠、外观或布局细节自行重建控件。
 - `View` 只负责界面展示与用户交互；状态协调、业务规则和副作用放在独立类型中。
 - 一个类型只解决一类问题，保持单一职责。
 

@@ -9,6 +9,7 @@ struct PluginSettingsPage: View {
     @Binding var selectedPluginID: String?
 
     @State private var isImporterPresented = false
+    @State private var isInstallChoicePresented = false
     @State private var isUninstallConfirmationPresented = false
     @State private var pluginPendingUninstall: InstalledPluginDescriptor?
 
@@ -17,7 +18,7 @@ struct PluginSettingsPage: View {
             PluginSettingsBrowser(
                 plugins: installation.plugins,
                 selectedPluginID: $selectedPluginID,
-                requestInstall: { isImporterPresented = true },
+                requestInstall: { isInstallChoicePresented = true },
                 requestUpdate: { isImporterPresented = true },
                 requestUninstall: {
                     pluginPendingUninstall = $0
@@ -29,6 +30,16 @@ struct PluginSettingsPage: View {
             }
         }
         .padding(24)
+        .confirmationDialog("安装插件", isPresented: $isInstallChoicePresented, titleVisibility: .visible) {
+            Button("从本地目录安装") { isImporterPresented = true }
+                .accessibilityIdentifier("settings.installLocalPlugin")
+            Button("从远程地址安装") { installation.presentRemoteInstallation() }
+                .accessibilityIdentifier("settings.installRemotePlugin")
+            Button("取消", role: .cancel) {}
+        }
+        .sheet(isPresented: remotePresentationBinding) {
+            RemotePluginInstallView(installation: installation)
+        }
         .fileImporter(isPresented: $isImporterPresented, allowedContentTypes: [.folder], onCompletion: inspectPlugin)
         .confirmationDialog(
             "确认安装插件？",
@@ -53,6 +64,11 @@ struct PluginSettingsPage: View {
             get: { installation.isConfirmationPresented },
             set: { installation.isConfirmationPresented = $0 }
         )
+    }
+
+    private var remotePresentationBinding: Binding<Bool> {
+        @Bindable var installation = installation
+        return $installation.isRemotePresented
     }
 
     private func inspectPlugin(_ result: Result<URL, Error>) {
@@ -82,7 +98,8 @@ struct PluginSettingsPage: View {
             : ""
         return Text(
             "\(candidate.manifest.name) \(candidate.manifest.version)\n" +
-                "运行时：\(candidate.manifest.runtime.rawValue)\n命令：\(commands)" + shellWarning
+                "运行时：\(candidate.manifest.runtime.rawValue)\n命令：\(commands)" + shellWarning +
+                (installation.replacementMessage.map { "\n" + $0 } ?? "")
         )
     }
 
@@ -125,7 +142,6 @@ private struct PluginSettingsBrowser: View {
             .id(plugin.id)
         } else {
             VStack(alignment: .leading, spacing: 16) {
-                PluginSourcePicker(source: $query.source)
                 PluginList(
                     plugins: plugins,
                     query: query,
@@ -139,7 +155,13 @@ private struct PluginSettingsBrowser: View {
             }
             .searchable(text: $query.searchText, placement: .toolbar, prompt: "搜索插件或命令")
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(id: "plugin-source", placement: .principal) {
+                    PluginSourcePicker(source: $query.source)
+                        .frame(width: 220)
+                }
+                // 用系统弹性间隔分开居中的筛选与右侧操作区。
+                ToolbarSpacer(.flexible, placement: .principal)
+                ToolbarItem(id: "plugin-install", placement: .primaryAction) {
                     Button("安装插件", systemImage: "plus", action: requestInstall)
                         .labelStyle(.iconOnly)
                         .help("安装插件")
@@ -154,12 +176,13 @@ private struct PluginSourcePicker: View {
     @Binding var source: PluginLibraryQuery.Source
 
     var body: some View {
-        Picker("", selection: $source) {
+        Picker("插件来源", selection: $source) {
             ForEach(PluginLibraryQuery.Source.allCases, id: \.self) { source in
                 Text(title(for: source))
                     .tag(source)
             }
         }
+        .labelsHidden()
         .pickerStyle(.segmented)
         .accessibilityIdentifier("settings.pluginSource")
     }

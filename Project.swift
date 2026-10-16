@@ -53,7 +53,8 @@ let project = Project(
             product: .unitTests,
             bundleId: "com.padding.leap.tests",
             infoPlist: .default,
-            sources: ["Tests/LeapTests/**"],
+            // 协调模型不依赖 AppKit，直接参与单测编译以验证取消及迟到回调。
+            sources: ["Tests/LeapTests/**", "Sources/Leap/PluginInstallationModel.swift"],
             dependencies: [.target(name: "LeapCore")],
             settings: .settings(base: [
                 "BUNDLE_LOADER": "",
