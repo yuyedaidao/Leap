@@ -134,9 +134,12 @@ class ReleaseTests(unittest.TestCase):
         original = (self.app / "Contents/Info.plist").read_bytes()
         output = self.root / "output"
         with patch.object(release, "run", side_effect=command), patch.object(release, "notarize") as notary:
-            release.package(self.app, "", "", output, "https://example.com/Leap-test.dmg", test=True)
+            release.package(self.app, "", "", output, None, test=True)
             notary.assert_not_called()
         self.assertTrue((output / "Leap-1.2.0-arm64-test.dmg").exists())
+        metadata = release.json.loads((output / "Leap-1.2.0-release.json").read_text())
+        self.assertNotIn("downloadURL", metadata)
+        self.assertFalse(metadata["notarized"])
         self.assertFalse(any(args[0] in ("security", "xcrun", "spctl") for args in calls))
         signing = [args for args in calls if args[0] == "codesign" and "--sign" in args]
         self.assertTrue(all(args[args.index("--sign") + 1] == "-" for args in signing))
@@ -147,6 +150,10 @@ class ReleaseTests(unittest.TestCase):
         self.assertTrue(any("import ssl, sqlite3" in args for args in calls))
         self.assertTrue(any("import ssl, sqlite3" in args and "-B" in args for args in calls))
         self.assertEqual(sum(args[:4] == ("codesign", "--verify", "--deep", "--strict") for args in calls), 2)
+
+    def test_formal_package_requires_download_url(self):
+        with self.assertRaisesRegex(ValueError, "下载地址"):
+            release.package(self.app, "Developer ID Application: Test", "profile", self.root / "output", None)
 
 
 if __name__ == "__main__":

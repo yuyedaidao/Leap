@@ -31,9 +31,10 @@ def inspect_app(app, download_url):
         raise ValueError("只能打包 Leap 应用。")
     if list(app.rglob("*.debug.dylib")) or list(app.rglob("__preview.dylib")):
         raise ValueError("不能发布 Debug/预览构建，请使用 Release 配置。")
-    url = urlsplit(download_url)
-    if url.scheme != "https" or not url.hostname or url.username or url.password or not url.path.endswith(".dmg"):
-        raise ValueError("下载地址必须是无凭据的 HTTPS DMG 地址。")
+    if download_url:
+        url = urlsplit(download_url)
+        if url.scheme != "https" or not url.hostname or url.username or url.password or not url.path.endswith(".dmg"):
+            raise ValueError("下载地址必须是无凭据的 HTTPS DMG 地址。")
     minimum = info.get("LSMinimumSystemVersion", "")
     if minimum not in ("26.0", "26.0.0"):
         raise ValueError("应用最低系统版本必须与官网的 macOS 26.0 一致。")
@@ -117,6 +118,8 @@ def package(app, identity, profile, output, download_url, test=False):
         identity = "-"
         print("测试包：仅临时签名，不经过 Apple 公证，可能被 Gatekeeper 拦截。", flush=True)
     else:
+        if not download_url:
+            raise ValueError("正式发行包必须指定下载地址。")
         if not identity.startswith("Developer ID Application:") or not profile.strip():
             raise ValueError("必须指定 Developer ID Application 身份和钥匙串公证配置。")
         identities = run("security", "find-identity", "-v", "-p", "codesigning")
@@ -171,7 +174,9 @@ def package(app, identity, profile, output, download_url, test=False):
             for chunk in iter(lambda: source.read(1024 * 1024), b""):
                 digest.update(chunk)
         metadata = {"version": version, "minimumMacOS": "26.0", "architecture": "arm64",
-                    "downloadURL": download_url, "sizeBytes": dmg.stat().st_size, "sha256": digest.hexdigest()}
+                    "sizeBytes": dmg.stat().st_size, "sha256": digest.hexdigest(), "notarized": not test}
+        if download_url:
+            metadata["downloadURL"] = download_url
         dmg.rename(destination)
         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     print(f"发行包已生成：{destination}\n候选元数据：{metadata_path}\n上传校验并完成安装验收后，再更新 Website/release.json。")
@@ -184,7 +189,7 @@ def main():
     parser.add_argument("--identity", default="")
     parser.add_argument("--notary-profile", default="")
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--download-url", required=True)
+    parser.add_argument("--download-url", help="正式发行必填；本地测试包可省略")
     args = parser.parse_args()
     try:
         package(args.app.resolve(), args.identity, args.notary_profile,

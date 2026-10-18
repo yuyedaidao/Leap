@@ -6,6 +6,8 @@
 
 入口是 `Scripts/publish-release.py`，需要在 Apple Silicon Mac 上安装 Xcode 命令行工具、Tuist、SwiftLint、Python 3.9+ 和 GitHub CLI。应用版本与构建号继续由 `Project.swift` 管理，不需要另写版本配置。
 
+只需本地安装包时使用 `python3 Scripts/publish-release.py --local-only --test`。此模式不需要 GitHub 登录或发行证书，不创建远端仓库或发布版本；允许保留未提交改动，并将已有跟踪文件的补丁存入本次产物目录的 `source.patch`。新增源码文件须先纳入 Git 跟踪，补丁才会包含它们。仍完整执行运行时准备、Release 构建、单元测试、脚本测试和签名验证，生成可拖入“应用程序”的测试 DMG；未经 Apple 公证，不能承诺下载后直接打开。元数据标注 `notarized: false`，不伪造下载地址。正式发行仍要求干净工作区、Developer ID 与公证配置。
+
 首次准备：
 
 1. 执行 `gh auth login --hostname github.com`，登录有下载仓库写入权限的账号。

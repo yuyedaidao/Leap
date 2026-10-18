@@ -45,6 +45,16 @@ def require_clean():
         raise ValueError("源码工作区有未提交改动，请先提交或自行整理；脚本不会自动提交或清理。")
 
 
+def tuist_executable():
+    # 旧 tuistenv 会截获 install，优先调用它已选择的真实版本以安装项目依赖。
+    version = run("tuist", "version")
+    if re.fullmatch(r"\d+\.\d+\.\d+", version):
+        executable = Path.home() / ".tuist/Versions" / version / "tuist"
+        if executable.is_file() and os.access(executable, os.X_OK):
+            return str(executable)
+    return "tuist"
+
+
 def check_repo(repo):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+", repo) or repo.split("/")[1] in (".", ".."):
         raise ValueError("仓库必须使用 owner/repo 格式。")
@@ -62,18 +72,23 @@ def check_repo(repo):
 
 
 def preflight(args):
+    if args.local_only and not args.test:
+        raise ValueError("本地打包请显式搭配 --test；正式发行继续使用公证发布流程。")
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("发布脚本仅支持 Apple Silicon Mac。")
-    for command in ("git", "gh", "tuist", "xcodebuild", "swiftlint", "codesign", "xcrun",
-                    "hdiutil", "ditto", "file", "lipo", "otool", "install_name_tool", "security", "spctl"):
+    commands = ("git", "tuist", "xcodebuild", "swiftlint", "codesign", "xcrun",
+                "hdiutil", "ditto", "file", "lipo", "otool", "install_name_tool", "security", "spctl")
+    for command in commands + (() if args.local_only else ("gh",)):
         if shutil.which(command) is None:
             raise ValueError(f"缺少必要工具：{command}")
     if args.notes_file:
         # 发布说明必须在任何远端写操作之前读成功。
         args.notes_file = args.notes_file.resolve()
         args.notes_file.read_text(encoding="utf-8")
-    require_clean()
-    run("gh", "auth", "status", "--hostname", "github.com")
+    if not (args.local_only and args.test):
+        require_clean()
+    if not args.local_only:
+        run("gh", "auth", "status", "--hostname", "github.com")
     identity, profile = "", ""
     if not args.test:
         identities = re.findall(r'"(Developer ID Application:[^"]+)"',
@@ -87,7 +102,7 @@ def preflight(args):
         if not profile:
             raise ValueError("LEAP_NOTARY_PROFILE 不能为空。")
         run("xcrun", "notarytool", "history", "--keychain-profile", profile, "--output-format", "json")
-    return check_repo(args.repo), identity, profile
+    return (None if args.local_only else check_repo(args.repo)), identity, profile
 
 
 def release_info(app, test):
@@ -149,16 +164,20 @@ def publish(repo, tag, test, artifacts, notes, target):
 def release(args):
     repository, identity, profile = preflight(args)
     commit = run("git", "rev-parse", "HEAD")
+    source_diff = run("git", "diff", "HEAD") if args.local_only and args.test else ""
     output_root = ROOT / "build/releases"
     output_root.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix="run-", dir=output_root))
     log = output / "build.log"
     print(f"本次产物和日志：{output}", flush=True)
     log.write_text(f"源码提交：{commit}\n模式：{'测试' if args.test else '正式'}\n", encoding="utf-8")
+    if args.local_only and args.test:
+        (output / "source.patch").write_text(source_diff + "\n", encoding="utf-8")
     try:
         run(str(ROOT / "Scripts/prepare-runtimes.sh"), log=log)
-        run("tuist", "install", log=log)
-        run("tuist", "generate", "--no-open", log=log)
+        tuist = tuist_executable()
+        run(tuist, "install", "--no-update", log=log)
+        run(tuist, "generate", "--no-open", log=log)
         run("swiftlint", "lint", "Sources", "Tests/LeapTests", "Project.swift", log=log)
         derived = output / "DerivedData"
         build_args = ("-workspace", "Leap.xcworkspace", "-scheme", "Leap",
@@ -169,7 +188,11 @@ def release(args):
         run("xcodebuild", "test", *build_args, "-configuration", "Debug", "-only-testing:LeapTests", log=log)
         run(sys.executable, "-m", "unittest", "discover", "-s", "Tests/Release", "-v", log=log)
         # Tuist 解析依赖可能改动锁文件；有变化就停止，不能发行无法复现的源码状态。
-        require_clean()
+        if args.local_only and args.test:
+            if run("git", "diff", "HEAD") != source_diff:
+                raise ValueError("构建期间源码或锁文件改变，请检查改动后重新打包。")
+        else:
+            require_clean()
         if run("git", "rev-parse", "HEAD") != commit:
             raise ValueError("构建期间源码提交已改变，请重新运行，不能发布混合源码状态。")
         app = derived / "Build/Products/Release/Leap.app"
@@ -178,7 +201,9 @@ def release(args):
             require_new_tag(args.repo, tag)
         download_url = f"https://github.com/{args.repo}/releases/download/{tag}/{filename}"
         package_args = [sys.executable, str(ROOT / "Scripts/package-release.py"), str(app),
-                        "--output", str(output), "--download-url", download_url]
+                        "--output", str(output)]
+        if not args.local_only or not args.test:
+            package_args += ["--download-url", download_url]
         if args.test:
             package_args += ["--test"]
         else:
@@ -193,8 +218,11 @@ def release(args):
         warning = "\n\n测试包：未经过 Apple 公证，可能被 Gatekeeper 拦截。" if args.test else ""
         notes.write_text(f"{supplied}{warning}\n\n版本：{version}（构建 {build}）\n"
                          f"系统要求：macOS 26+ / Apple Silicon\n源码提交：{commit}\n"
-                         f"此仓库仅托管下载，发行标签不代表应用源码。\n\n"
+                         f"{'本地测试包包含 source.patch 中的未提交改动。' if args.local_only and args.test else '发行标签不代表应用源码。'}\n\n"
                          f"DMG SHA256：`{sha256(dmg)}`\n", encoding="utf-8")
+        if args.local_only:
+            print(f"本地安装包已生成：{dmg}\n校验文件：{checksum}\n未上传或发布。", flush=True)
+            return
         if repository is None:
             # 不传 --source、--push 或 --remote，避免将私有源码同步到下载仓库。
             run("gh", "repo", "create", args.repo, "--public", "--add-readme", "--description", "Leap macOS 应用下载")
@@ -212,6 +240,7 @@ def release(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test", action="store_true", help="发布临时签名、未公证的预发布版本")
+    parser.add_argument("--local-only", action="store_true", help="仅生成本地安装包，不连接 GitHub；搭配 --test 可打包未提交改动")
     parser.add_argument("--repo", default=DEFAULT_REPO, help="独立公开下载仓库，格式 owner/repo")
     parser.add_argument("--notes-file", type=Path, help="UTF-8 更新说明文件")
     args = parser.parse_args()

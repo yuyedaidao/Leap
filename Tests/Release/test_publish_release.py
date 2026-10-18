@@ -21,7 +21,7 @@ class PublishTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.args = argparse.Namespace(repo=release.DEFAULT_REPO, test=True, notes_file=None)
+        self.args = argparse.Namespace(repo=release.DEFAULT_REPO, test=True, notes_file=None, local_only=False)
         self.repository = {"private": False, "permissions": {"push": True}, "default_branch": "main"}
 
     def test_release_names_come_from_built_app(self):
@@ -64,6 +64,32 @@ class PublishTests(unittest.TestCase):
         with patch.object(release, "run", return_value=" M Project.swift"):
             with self.assertRaisesRegex(ValueError, "未提交"):
                 release.require_clean()
+
+    def test_local_test_needs_no_github_or_clean_worktree(self):
+        self.args.local_only = True
+        with patch.object(release.platform, "system", return_value="Darwin"), \
+             patch.object(release.platform, "machine", return_value="arm64"), \
+             patch.object(release.shutil, "which", side_effect=lambda command: None if command == "gh" else "tool"), \
+             patch.object(release, "require_clean") as clean, \
+             patch.object(release, "run") as command, \
+             patch.object(release, "check_repo") as repo:
+            self.assertEqual(release.preflight(self.args), (None, "", ""))
+            clean.assert_not_called()
+            command.assert_not_called()
+            repo.assert_not_called()
+        self.args.test = False
+        with self.assertRaisesRegex(ValueError, "--test"):
+            release.preflight(self.args)
+
+    def test_legacy_tuist_launcher_uses_selected_binary(self):
+        executable = self.root / ".tuist/Versions/4.158.0/tuist"
+        executable.parent.mkdir(parents=True)
+        executable.touch(mode=0o755)
+        with patch.object(release.Path, "home", return_value=self.root), \
+             patch.object(release, "run", return_value="4.158.0"):
+            self.assertEqual(release.tuist_executable(), str(executable))
+            executable.unlink()
+            self.assertEqual(release.tuist_executable(), "tuist")
 
     def test_preflight_stops_on_missing_tool_or_login(self):
         with patch.object(release.platform, "system", return_value="Darwin"), \
@@ -162,9 +188,11 @@ class PublishTests(unittest.TestCase):
                 self.assertTrue((self.root / "Leap.dmg").exists())
 
     def test_pipeline_order_and_local_failures_never_publish(self):
-        for test, failure in ((False, None), (True, None), (False, "build"), (False, "package"), (False, "source")):
-            with self.subTest(test=test, failure=failure):
+        for test, failure, local in ((False, None, False), (True, None, False), (True, None, True),
+                                     (False, "build", False), (False, "package", False), (False, "source", False)):
+            with self.subTest(test=test, failure=failure, local=local):
                 self.args.test = test
+                self.args.local_only = local
                 calls = []
                 def command(*args, **kwargs):
                     calls.append(args)
@@ -197,8 +225,13 @@ class PublishTests(unittest.TestCase):
                         publish.assert_not_called()
                     else:
                         release.release(self.args)
-                        self.assertEqual(publish.call_args.args[1], "v1.2.0-test.3" if test else "v1.2.0")
+                        if local:
+                            publish.assert_not_called()
+                            self.assertFalse(any(args[0] == "gh" for args in calls))
+                        else:
+                            self.assertEqual(publish.call_args.args[1], "v1.2.0-test.3" if test else "v1.2.0")
                         package = next(args for args in calls if len(args) > 1 and args[1].endswith("package-release.py"))
+                        self.assertEqual("--download-url" in package, not local)
                         self.assertEqual("--test" in package, test)
                         self.assertEqual("--identity" in package, not test)
                         self.assertLess(next(i for i, args in enumerate(calls) if args[:2] == ("xcodebuild", "test")), calls.index(package))
