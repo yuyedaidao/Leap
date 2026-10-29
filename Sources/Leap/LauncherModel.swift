@@ -76,6 +76,7 @@ final class LauncherModel {
     private let catalog: InstalledPluginCatalog?
     let pluginPaths: AppPaths?
     let hostAPI: PluginHostAPI?
+    private let clipboardMonitor: ClipboardHistoryMonitor?
     var externalTargetPID: Int32?
     var inputWindowVisibility: ((Bool) -> Void)?
     private let recentStore: LauncherUsageStore
@@ -109,7 +110,12 @@ final class LauncherModel {
     init(paths: AppPaths) {
         catalog = InstalledPluginCatalog(paths: paths)
         pluginPaths = paths
-        hostAPI = PluginHostAPI(paths: paths)
+        let hostAPI = PluginHostAPI(paths: paths)
+        self.hostAPI = hostAPI
+        let monitor = try? ClipboardHistoryMonitor(paths: paths, documentStores: hostAPI.documentStores)
+        clipboardMonitor = monitor
+        hostAPI.onClipboardWrite = { [weak monitor] in monitor?.suppressNextCapture() }
+        monitor?.start()
         recentStore = LauncherUsageStore()
         scriptExecutor = PluginScriptExecutor(runtimeLocator: BundledRuntimeLocator(paths: paths))
         shellExecutor = ShellScriptExecutor()
@@ -129,6 +135,7 @@ final class LauncherModel {
         catalog = nil
         pluginPaths = paths
         hostAPI = paths.map { PluginHostAPI(paths: $0) }
+        clipboardMonitor = nil
         recentStore = LauncherUsageStore(defaults: .standard, key: "uiTestingLauncherUsageRecords")
         scriptExecutor = nil
         shellExecutor = nil

@@ -81,7 +81,9 @@ public struct InstalledPluginCatalog {
                 guard directory.lastPathComponent == manifest.id,
                       let record = try installer.readTrustRecord(for: manifest.id),
                       record.version == manifest.version,
-                      record.contentDigest == (try installer.contentDigest(of: directory, version: record.digestVersion ?? 1)) else {
+                      record.contentDigest == (try installer.contentDigest(
+                        of: directory, version: record.digestVersion ?? 1
+                      )) else {
                     return nil
                 }
                 let iconURL = manifest.icon.map { directory.appendingPathComponent($0) }
@@ -96,24 +98,34 @@ public struct InstalledPluginCatalog {
     }
 
     private func loadOfficialPlugins(fileManager: FileManager) -> [InstalledPluginDescriptor] {
-        let directory = paths.officialPluginsDirectory.appendingPathComponent("TemplateGenerator", isDirectory: true)
-        // 官方资源缺失只影响该插件，不阻止本地插件索引。
+        // 官方资源缺失只影响官方插件，不阻止本地插件索引。
         guard fileManager.fileExists(atPath: paths.officialPluginsDirectory.path) else {
             Self.logger.error("官方插件资源目录不存在。")
             return []
         }
-        do {
-            let manifest = try PluginManifestValidator().load(from: directory, fileManager: fileManager)
-            guard manifest.id == AppPaths.templateGeneratorID else {
-                throw PluginManifestValidator.ValidationError.malformedManifest
+        let directories = (try? fileManager.contentsOfDirectory(
+            at: paths.officialPluginsDirectory, includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        var identifiers = Set<String>()
+        return directories.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }).compactMap { directory in
+            guard (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return nil }
+            do {
+                let manifest = try PluginManifestValidator().load(
+                    from: directory, installedPluginIDs: identifiers, fileManager: fileManager
+                )
+                guard AppPaths.isOfficialPluginID(manifest.id) else {
+                    throw PluginManifestValidator.ValidationError.malformedManifest
+                }
+                identifiers.insert(manifest.id)
+                return InstalledPluginDescriptor(
+                    manifest: manifest, pluginDirectory: directory,
+                    iconURL: manifest.icon.map { directory.appendingPathComponent($0) }, origin: .official
+                )
+            } catch {
+                Self.logger.error("官方插件资源不可用：\(directory.lastPathComponent)，\(error.localizedDescription)。")
+                return nil
             }
-            return [InstalledPluginDescriptor(
-                manifest: manifest, pluginDirectory: directory,
-                iconURL: manifest.icon.map { directory.appendingPathComponent($0) }, origin: .official
-            )]
-        } catch {
-            Self.logger.error("官方插件资源不可用：\(error.localizedDescription)。")
-            return []
         }
     }
 

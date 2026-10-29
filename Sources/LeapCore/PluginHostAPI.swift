@@ -33,6 +33,9 @@ public final class PluginHostAPI: NSObject, UNUserNotificationCenterDelegate {
     private let paths: AppPaths
     private let pasteboard: NSPasteboard
     private let defaults: UserDefaults
+    public let documentStores: PluginDocumentStoreProvider
+    /// 宿主写入剪贴板后通知历史采集跳过该次变更，避免粘贴动作产生新历史。
+    public var onClipboardWrite: (() -> Void)?
     private let logger = YQLogger(label: "com.padding.leap/host-api")
     public private(set) var pendingCalls = 0
     private static let imageDecoder = ImageDecoder()
@@ -42,10 +45,12 @@ public final class PluginHostAPI: NSObject, UNUserNotificationCenterDelegate {
     private var inputInProgress = false
     var inputEnvironment = PluginInputEnvironment()
 
-    public init(paths: AppPaths, pasteboard: NSPasteboard = .general, defaults: UserDefaults = .standard) {
+    public init(paths: AppPaths, pasteboard: NSPasteboard = .general, defaults: UserDefaults = .standard,
+                documentStores: PluginDocumentStoreProvider? = nil) {
         self.paths = paths
         self.pasteboard = pasteboard
         self.defaults = defaults
+        self.documentStores = documentStores ?? PluginDocumentStoreProvider(paths: paths)
         super.init()
     }
 
@@ -183,6 +188,22 @@ extension PluginHostAPI {
         case let .image(image): succeeded = pasteboard.writeObjects([image])
         }
         guard succeeded else { throw PluginSessionError.plugin("写入剪贴板失败。") }
+        onClipboardWrite?()
+    }
+
+    private func database(_ method: String, params: PluginValue, context: Context) throws -> PluginValue {
+        do {
+            let store = try documentStores.store(for: context.pluginID)
+            switch method {
+            case "dbPut": return try store.put(params["doc"] ?? .null)
+            case "dbGet": return try store.get(try string(params, "id")) ?? .null
+            case "dbRemove": return try store.remove(try string(params, "id"), revision: try string(params, "rev"))
+            case "dbAllDocs": return .array(try store.allDocs())
+            default: throw PluginSessionError.plugin("未知数据库接口。")
+            }
+        } catch let error as PluginDocumentStore.StoreError {
+            throw PluginSessionError.plugin(error.localizedDescription)
+        }
     }
 
     // 分派表的独立 case 不构成组合业务分支，按 API 分组保留可读性。
@@ -193,8 +214,8 @@ extension PluginHostAPI {
             let clipboard = try await prepareClipboard(method, params: params)
             try check(context)
             try write(clipboard)
-        case "getCopyedFiles":
-            return copiedFiles()
+        case "getCopyedFiles": return copiedFiles()
+        case "dbPut", "dbGet", "dbRemove", "dbAllDocs": return try database(method, params: params, context: context)
         case let name where Self.inputMethods.contains(name):
             try await input(name, params: params, context: context)
         case "simulateKeyboardTap":

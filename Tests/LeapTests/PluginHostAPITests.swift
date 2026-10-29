@@ -10,17 +10,22 @@ struct PluginHostAPITests {
         let board: NSPasteboard
         let defaults: UserDefaults
         let name: String
-        func close() { board.releaseGlobally(); defaults.removePersistentDomain(forName: name) }
+        let root: URL
+        func close() {
+            board.releaseGlobally()
+            defaults.removePersistentDomain(forName: name)
+            try? FileManager.default.removeItem(at: root)
+        }
     }
 
     private func service() -> Fixture {
         let name = "LeapHostTests-\(UUID())"
         let board = NSPasteboard(name: NSPasteboard.Name(name))
         let defaults = UserDefaults(suiteName: name)!
-        let paths = AppPaths(applicationSupportDirectory: URL(fileURLWithPath: "/tmp/LeapHostTests"),
-                             resourceDirectory: URL(fileURLWithPath: "/tmp"))
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        let paths = AppPaths(applicationSupportDirectory: root, resourceDirectory: URL(fileURLWithPath: "/tmp"))
         return Fixture(api: PluginHostAPI(paths: paths, pasteboard: board, defaults: defaults),
-                       board: board, defaults: defaults, name: name)
+                       board: board, defaults: defaults, name: name, root: root)
     }
 
     private func context() -> PluginHostAPI.Context {
@@ -79,6 +84,27 @@ struct PluginHostAPITests {
                 params: .object(["image": .string("data:image/png;base64,AAAA")]), context: context())
         }
         #expect(board.canReadObject(forClasses: [NSImage.self], options: nil))
+    }
+
+    @Test("插件数据库按插件隔离并支持读写")
+    func documentDatabase() async throws {
+        let fixture = service()
+        defer { fixture.close() }
+        let created = try await fixture.api.handle("dbPut", params: .object([
+            "doc": .object(["_id": .string("entry"), "value": .string("内容")])
+        ]), context: context())
+        let revision = try #require(created["rev"]?.string)
+        let fetched = try await fixture.api.handle("dbGet", params: .object(["id": .string("entry")]),
+                                                   context: context())
+        #expect(fetched["value"] == .string("内容"))
+        let other = PluginHostAPI.Context(pluginID: "other", commandIDs: [], targetPID: nil,
+                                          isActive: { true }, setWindowHidden: { _ in })
+        #expect(try await fixture.api.handle("dbAllDocs", params: .object([:]), context: other) == .array([]))
+        _ = try await fixture.api.handle("dbRemove", params: .object([
+            "id": .string("entry"), "rev": .string(revision)
+        ]), context: context())
+        #expect(try await fixture.api.handle("dbGet", params: .object(["id": .string("entry")]),
+                                             context: context()) == .null)
     }
 
     @Test("路径映射、图标、UUID 持久性和通知命令校验")

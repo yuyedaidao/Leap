@@ -1,0 +1,27 @@
+{
+  "id": "com.padding.leap.clipboard",
+  "name": "剪切板",
+  "version": "1.0.0",
+  "runtime": "javascript",
+  "entry": "main.js",
+  "icon": "default-icon.png",
+  "commands": [
+    {
+      "id": "clipboard.history",
+      "title": "剪切板",
+      "mode": "interactive",
+      "presentation": "list",
+      "input": {
+        "enabled": true,
+        "placeholder": "搜索剪切板历史"
+      },
+      "keywords": [
+        "剪切板",
+        "剪贴板",
+        "clipboard",
+        "paste"
+      ]
+    }
+  ],
+  "minimumHostVersion": "1.2.0"
+}

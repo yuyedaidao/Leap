@@ -25,10 +25,9 @@ struct OfficialPluginTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let catalog = InstalledPluginCatalog(paths: paths)
         let plugins = catalog.loadPlugins()
-        #expect(plugins.count == 1)
-        #expect(plugins.first?.id == AppPaths.templateGeneratorID)
-        #expect(plugins.first?.origin == .official)
-        #expect(catalog.load().map(\.commandID) == ["template.generate"])
+        #expect(Set(plugins.map(\.id)) == [AppPaths.templateGeneratorID, AppPaths.clipboardPluginID])
+        #expect(plugins.allSatisfy { $0.origin == .official })
+        #expect(Set(catalog.load().map(\.commandID)) == ["template.generate", "clipboard.history"])
         #expect(!FileManager.default.fileExists(atPath: paths.applicationSupportDirectory.path))
     }
 
@@ -50,6 +49,9 @@ struct OfficialPluginTests {
             try installer.uninstall(pluginID: manifest.id)
         }
         #expect(FileManager.default.fileExists(atPath: directory.path))
+        #expect(throws: PluginInstaller.InstallationError.officialPluginReserved) {
+            try installer.inspect(sourceDirectory: paths.officialPluginsDirectory.appendingPathComponent("Clipboard"))
+        }
     }
 
     @Test("旧同ID受管副本去重保留；官方损坏不回退，其他本地插件继续可用")
@@ -76,11 +78,11 @@ struct OfficialPluginTests {
         #expect(catalog.loadPlugins().filter { $0.id == manifest.id }.count == 1)
         #expect(catalog.loadPlugins().first { $0.id == "test.local" }?.origin == .local)
         try FileManager.default.removeItem(at: directory.appendingPathComponent("main.js"))
-        #expect(catalog.loadPlugins().map(\.id) == ["test.local"])
+        #expect(Set(catalog.loadPlugins().map(\.id)) == ["test.local", AppPaths.clipboardPluginID])
         #expect(FileManager.default.fileExists(atPath: legacy.path))
         #expect(FileManager.default.fileExists(atPath: try paths.trustRecordURL(for: manifest.id).path))
         try installer.uninstall(pluginID: localManifest.id)
-        #expect(catalog.loadPlugins().isEmpty)
+        #expect(catalog.loadPlugins().map(\.id) == [AppPaths.clipboardPluginID])
         #expect(FileManager.default.fileExists(atPath: local.path))
     }
 }

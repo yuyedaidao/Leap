@@ -30,7 +30,28 @@
         return invoke(method, { [field]: value });
       } catch (error) { return Promise.reject(error); }
     };
+    const dbID = value => {
+      if (typeof value !== 'string' || !value) throw new TypeError('数据库文档 _id 必须为非空字符串。');
+      return value;
+    };
     return {
+      db: {
+        put: doc => {
+          if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return Promise.reject(new TypeError('数据库文档必须为对象。'));
+          try { dbID(doc._id); } catch (error) { return Promise.reject(error); }
+          return invoke('dbPut', { doc });
+        },
+        get: id => {
+          try { return invoke('dbGet', { id: dbID(id) }); } catch (error) { return Promise.reject(error); }
+        },
+        remove: (id, rev) => {
+          try {
+            if (typeof rev !== 'string' || !rev) throw new TypeError('数据库文档 _rev 必须为非空字符串。');
+            return invoke('dbRemove', { id: dbID(id), rev });
+          } catch (error) { return Promise.reject(error); }
+        },
+        allDocs: () => invoke('dbAllDocs', {}),
+      },
       showLoading: () => invoke('showLoading', {}),
       hideLoading: () => invoke('hideLoading', {}),
       copyText: value => single('copyText', 'text', value),

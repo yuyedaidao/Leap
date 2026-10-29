@@ -49,13 +49,27 @@ public struct AppPaths: Sendable {
 
     /// 官方插件直接读取随包资源，不创建可被本地安装覆盖的受管副本。
     public static let templateGeneratorID = "com.padding.leap.template-generator"
+    public static let clipboardPluginID = "com.padding.leap.clipboard"
+    private static let officialPluginIDs: Set<String> = [templateGeneratorID, clipboardPluginID]
 
     public var officialPluginsDirectory: URL {
         resourceDirectory.appendingPathComponent("OfficialPlugins", isDirectory: true)
     }
 
     public static func isOfficialPluginID(_ id: String) -> Bool {
-        id == templateGeneratorID
+        officialPluginIDs.contains(id)
+    }
+
+    public func pluginDatabaseDirectory(for pluginIdentifier: String) throws -> URL {
+        guard Self.isSafePluginIdentifier(pluginIdentifier) else { throw PathError.invalidPluginIdentifier }
+        return applicationSupportDirectory
+            .appendingPathComponent("PluginData", isDirectory: true)
+            .appendingPathComponent(pluginIdentifier, isDirectory: true)
+            .appendingPathComponent("db", isDirectory: true)
+    }
+
+    public var clipboardHistoryDirectory: URL {
+        applicationSupportDirectory.appendingPathComponent("ClipboardHistory", isDirectory: true)
     }
 
     public var trustRecordsDirectory: URL {

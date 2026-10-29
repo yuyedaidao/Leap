@@ -33,6 +33,25 @@ test('共享包装器的参数、结构化结果、校验及图片大小边界',
   await assert.rejects(create(() => { throw new Error('权限拒绝'); }).shellBeep(), /权限拒绝/);
 });
 
+test('数据库包装器校验文档参数并保持结构化返回值', async () => {
+  const calls = [];
+  const sdk = create((method, params) => { calls.push({ method, params }); return { ok: true }; });
+  await sdk.db.put({ _id: 'note', text: '内容' });
+  await sdk.db.get('note');
+  await sdk.db.remove('note', 'rev-1');
+  await sdk.db.allDocs();
+  assert.deepEqual(calls, [
+    { method: 'dbPut', params: { doc: { _id: 'note', text: '内容' } } },
+    { method: 'dbGet', params: { id: 'note' } },
+    { method: 'dbRemove', params: { id: 'note', rev: 'rev-1' } },
+    { method: 'dbAllDocs', params: {} },
+  ]);
+  for (const action of [() => sdk.db.put(null), () => sdk.db.put({}), () => sdk.db.get(''),
+    () => sdk.db.remove('note', ''), () => sdk.db.remove('', 'rev')]) {
+    await assert.rejects(action(), TypeError);
+  }
+});
+
 test('真实网页桥接返回结构化数据，退出后禁止调用', async () => {
   const calls = [];
   const window = { __leapContext: { commandID: 'run', query: '' }, webkit: { messageHandlers: {
