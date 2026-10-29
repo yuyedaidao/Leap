@@ -118,6 +118,19 @@ leap.onSelect(lambda context: context['item']['title'])
   assert.equal((await plugin.call('select', 'query', 'one')).value, '原值');
 });
 
+test('imagePath 字段随列表保留并校验类型', async t => {
+  for (const runtime of ['javascript', 'python']) {
+    const source = runtime === 'python' ? `
+import json
+leap.onInputChange(lambda context: context['setList'](json.loads(context['text'])))
+` : `leap.onInputChange(({text,setList}) => setList(JSON.parse(text)));`;
+    const plugin = fixture(t, source, undefined, runtime);
+    const ok = await plugin.call('input', JSON.stringify([{ id: 'a', title: '图片', imagePath: '/tmp/a.png' }]));
+    assert.equal(ok.items[0].imagePath, '/tmp/a.png');
+    assert.match((await plugin.call('input', JSON.stringify([{ id: 'a', title: '图片', imagePath: 1 }]))).error, /标题/);
+  }
+});
+
 for (const runtime of ['javascript', 'python']) {
   test(`${runtime} 动态列表标题、子标题与旧数组结果兼容`, async t => {
     const source = runtime === 'python' ? `

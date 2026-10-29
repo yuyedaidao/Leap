@@ -29,11 +29,13 @@ public struct PluginListItem: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let title: String
     public let description: String?
+    public let imagePath: String?
 
-    public init(id: String, title: String, description: String? = nil) {
+    public init(id: String, title: String, description: String? = nil, imagePath: String? = nil) {
         self.id = id
         self.title = title
         self.description = description
+        self.imagePath = imagePath
     }
 
     public static func decode(_ value: PluginValue) throws -> [Self] {
@@ -48,10 +50,13 @@ public struct PluginListItem: Codable, Identifiable, Equatable, Sendable {
                   let title = fields["title"]?.string, !title.isEmpty,
                   identifiers.insert(id).inserted,
                   fields["description"] == nil || fields["description"] == .null ||
-                    fields["description"]?.string != nil else {
+                    fields["description"]?.string != nil,
+                  fields["imagePath"] == nil || fields["imagePath"] == .null ||
+                    fields["imagePath"]?.string != nil else {
                 throw ListError.invalidResult
             }
-            return Self(id: id, title: title, description: fields["description"]?.string)
+            return Self(id: id, title: title, description: fields["description"]?.string,
+                        imagePath: fields["imagePath"]?.string)
         }
     }
 

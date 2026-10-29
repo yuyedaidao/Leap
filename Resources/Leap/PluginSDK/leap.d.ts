@@ -3,6 +3,8 @@ interface LeapListItem {
   title: string;
   /** 条目标题下方的子标题；空白时隐藏。 */
   description?: string;
+  /** 图片条目的本地文件路径；原生列表显示缩略图。 */
+  imagePath?: string;
 }
 interface LeapListOptions { title?: string; }
 interface LeapContext {

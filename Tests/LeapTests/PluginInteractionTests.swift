@@ -60,10 +60,12 @@ struct PluginInteractionManifestTests {
             try PluginListItem.decode(JSONDecoder().decode(PluginValue.self, from: Data(text.utf8)))
         }
         #expect(try decode(#"[{"id":"one","title":"结果"}]"#).first?.id == "one")
+        #expect(try decode(#"[{"id":"a","title":"结果","imagePath":"/tmp/a.png"}]"#).first?.imagePath == "/tmp/a.png")
         #expect(try decode("[]").isEmpty)
         for value in [#"[{"id":"","title":"结果"}]"#, #"[{"id":"a","title":""}]"#,
                       #"[{"id":"a","title":"1"},{"id":"a","title":"2"}]"#,
                       #"[{"id":1,"title":"结果"}]"#, #"[{"id":"a","title":"结果","description":1}]"#,
+                      #"[{"id":"a","title":"结果","imagePath":1}]"#,
                       #""bad""#] {
             #expect(throws: (any Error).self) { try decode(value) }
         }

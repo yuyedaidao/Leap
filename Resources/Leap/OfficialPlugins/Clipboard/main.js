@@ -36,7 +36,7 @@ function content(record) {
   return null;
 }
 
-function historyItems(records, query = '', now = Date.now()) {
+function historyItems(records, query = '', now = Date.now(), root) {
   const keyword = query.trim().toLowerCase();
   return records.map(record => ({ record, content: content(record) }))
     .filter(item => item.content && typeof item.record._id === 'string' && item.record._id)
@@ -44,16 +44,23 @@ function historyItems(records, query = '', now = Date.now()) {
     .sort((left, right) => timestamp(right.record) - timestamp(left.record)
       || right.record._id.localeCompare(left.record._id))
     .slice(0, 100)
-    .map(({ record, content: value }) => ({
-      id: record._id,
-      title: value.title || '无标题',
-      description: `${value.detail} · ${timeDescription(timestamp(record), now)}`,
-    }));
+    .map(({ record, content: value }) => {
+      const item = {
+        id: record._id,
+        title: value.title || '无标题',
+        description: `${value.detail} · ${timeDescription(timestamp(record), now)}`,
+      };
+      if (record.type === 'image' && typeof record.imagePath === 'string' && typeof root === 'string') {
+        item.imagePath = path.join(root, 'ClipboardHistory', record.imagePath);
+      }
+      return item;
+    });
 }
 
 if (typeof leap !== 'undefined') {
   leap.onInputChange(async ({ text, setList }) => {
-    setList(historyItems(await leap.db.allDocs(), text), { title: text.trim() ? '搜索剪切板' : '剪切板历史' });
+    const root = await leap.getPath('userData');
+    setList(historyItems(await leap.db.allDocs(), text, Date.now(), root), { title: text.trim() ? '搜索剪切板' : '剪切板历史' });
   });
   leap.onSelect(async ({ item }) => {
     const record = await leap.db.get(item.id);

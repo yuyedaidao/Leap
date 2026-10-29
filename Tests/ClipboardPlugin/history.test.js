@@ -15,6 +15,9 @@ test('历史按时间倒序、搜索全文并限制原生列表为 100 项', () 
     { _id: '4', type: 'image', imagePath: '4/image.png', timestamp: now - 3000 },
   ];
   assert.deepEqual(historyItems(records, '', now).map(item => item.id), ['2', '3', '4', '1']);
+  const withRoot = historyItems(records, '', now, '/support');
+  assert.equal(withRoot.find(item => item.id === '4').imagePath, path.join('/support', 'ClipboardHistory', '4/image.png'));
+  assert.equal(withRoot.find(item => item.id === '2').imagePath, undefined);
   assert.equal(historyItems(records, '最新', now)[0].title, '最新 内容');
   assert.equal(historyItems(records, '报告', now)[0].title, '报告.txt 等 2 个文件');
   assert.equal(historyItems(records, 'image', now)[0].title, '图片');
@@ -44,6 +47,7 @@ test('真实插件会话读取数据库并按类型调用对应粘贴接口', as
   t.after(() => plugin.close());
   const input = await plugin.call('input');
   assert.deepEqual(input.items.map(item => item.id), ['text', 'files', 'image']);
+  assert.equal(input.items.find(item => item.id === 'image').imagePath, path.join('/support', 'ClipboardHistory', 'image/hash.png'));
   for (const id of ['text', 'files', 'image']) await plugin.call('select', '', id);
   assert.deepEqual(calls.filter(call => call.method.startsWith('hideMainWindow')).map(call => [call.method, call.params]), [
     ['hideMainWindowPasteText', { text: '文本' }],

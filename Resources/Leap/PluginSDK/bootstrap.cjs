@@ -64,12 +64,17 @@ function hostCall(method, params = {}) {
 function validateItems(values) {
   if (!Array.isArray(values) || values.length > 100 || values.some(item =>
     !item || typeof item.id !== 'string' || !item.id || typeof item.title !== 'string' || !item.title ||
-    (item.description !== undefined && typeof item.description !== 'string')) ||
+    (item.description !== undefined && typeof item.description !== 'string') ||
+    (item.imagePath !== undefined && typeof item.imagePath !== 'string')) ||
     new Set(values.map(item => item.id)).size !== values.length) {
     throw new Error('列表最多 100 项，条目 ID 必须唯一且标题不能为空。');
   }
   // 保留协议规定的字段，不让不可序列化业务对象进入通信通道。
-  return values.map(({ id, title, description }) => ({ id, title, ...(description !== undefined ? { description } : {}) }));
+  return values.map(({ id, title, description, imagePath }) => ({
+    id, title,
+    ...(description !== undefined ? { description } : {}),
+    ...(imagePath !== undefined ? { imagePath } : {}),
+  }));
 }
 
 globalThis.leap = Object.freeze({

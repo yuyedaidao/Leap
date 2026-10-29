@@ -285,7 +285,8 @@ def handle(message):
                     raise ValueError("列表最多 100 项。")
                 if any(not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]
                        or not isinstance(item.get("title"), str) or not item["title"]
-                       or ("description" in item and not isinstance(item["description"], str)) for item in items):
+                       or ("description" in item and not isinstance(item["description"], str))
+                       or ("imagePath" in item and not isinstance(item["imagePath"], str)) for item in items):
                     raise ValueError("条目 ID 和标题必须是非空字符串。")
                 if len({item["id"] for item in items}) != len(items):
                     raise ValueError("条目 ID 重复。")
@@ -293,7 +294,7 @@ def handle(message):
                 if options is not None and (not isinstance(options, dict)
                                            or ("title" in options and not isinstance(options["title"], str))):
                     raise ValueError("列表选项必须为对象，顶部标题必须为字符串。")
-                entries = [{key: item[key] for key in ("id", "title", "description") if key in item} for item in items]
+                entries = [{key: item[key] for key in ("id", "title", "description", "imagePath") if key in item} for item in items]
                 snapshot = {"items": entries, "title": options["title"]} if options is not None and "title" in options else entries
                 send({"type": "list", "id": identity, "value": snapshot})
                 latest_items = entries

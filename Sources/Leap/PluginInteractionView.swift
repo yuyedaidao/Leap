@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import LeapCore
 import SwiftUI
 
@@ -19,9 +20,10 @@ struct PluginInteractionView: View {
                     committedInput: session.committedInput, submitID: session.submitID
                 )
                 .frame(height: webHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
                 .accessibilityIdentifier("plugin.embeddedWeb")
             }
-        }.clipShape(RoundedRectangle(cornerRadius: 10))
+        }
     }
 
     private var webHeight: CGFloat {
@@ -97,7 +99,7 @@ private struct PluginResultList: View {
                                 shortcut: LauncherListShortcut.hint(at: index),
                                 identifierPrefix: "plugin", itemID: item.id,
                                 activate: { session.select(item.id) }) {
-                    EmptyView()
+                    ImageThumbnail(path: item.imagePath)
                 }
                 .accessibilityIdentifier("plugin.result.\(item.id)")
                 .disabled(session.isSelecting || session.isLoading)
@@ -112,6 +114,50 @@ private struct PluginResultList: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+@MainActor
+private enum ImageThumbnailCache {
+    static let images = NSCache<NSString, NSImage>()
+}
+
+/// 列表项的图片缩略图：降采样加载避免大图占满内存，加载失败回退占位图标。
+private struct ImageThumbnail: View {
+    let path: String?
+
+    var body: some View {
+        if let path {
+            if let image = Self.load(path) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 96, height: 96)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else {
+                Image(systemName: "photo")
+                    .font(.largeTitle)
+                    .foregroundStyle(.tint)
+                    .frame(width: 96, height: 96)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+    }
+
+    @MainActor private static func load(_ path: String) -> NSImage? {
+        let key = path as NSString
+        if let cached = ImageThumbnailCache.images.object(forKey: key) { return cached }
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 256,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        ImageThumbnailCache.images.setObject(image, forKey: key)
+        return image
     }
 }
 
