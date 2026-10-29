@@ -147,11 +147,12 @@ struct PluginHostAPITests {
         let inputContext = PluginHostAPI.Context(pluginID: "test", commandIDs: ["run"], targetPID: 42,
                                                 isActive: { true }, setWindowHidden: { visibility.append($0) })
         api.inputEnvironment.isAlive = { _ in true }
-        api.inputEnvironment.activate = { _ in true }
+        var events: [String] = []
+        api.inputEnvironment.activate = { _ in events.append("activate"); return true }
         api.inputEnvironment.frontmostPID = { 42 }
         api.inputEnvironment.requirePermission = {}
         api.inputEnvironment.type = { text.append(contentsOf: $0) }
-        api.inputEnvironment.paste = { pasted = true }
+        api.inputEnvironment.paste = { pasted = true; events.append("paste") }
         _ = try await api.handle("hideMainWindowTypeString", params: .object(["text": .string("中文😀👨‍👩‍👧‍👦")]),
             context: inputContext)
         #expect(String(decoding: text, as: UTF16.self) == "中文😀👨‍👩‍👧‍👦")
@@ -161,6 +162,7 @@ struct PluginHostAPITests {
             context: inputContext)
         #expect(pasted)
         #expect(board.string(forType: .string) == "paste")
+        #expect(Array(events.suffix(2)) == ["activate", "paste"])
         api.inputEnvironment.requirePermission = { throw PluginSessionError.plugin("权限拒绝") }
         visibility = []
         await #expect(throws: (any Error).self) {

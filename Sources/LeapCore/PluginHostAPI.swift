@@ -374,8 +374,6 @@ extension PluginHostAPI {
             }
             try await Task.sleep(for: .milliseconds(20))
         }
-        // 激活通知先于键盘焦点交接；留一个事件周期，并在发送前再次核对目标。
-        try await Task.sleep(for: .milliseconds(50))
     }
 
     private func readTarget(_ method: String, context: Context) async throws -> String {
