@@ -1,5 +1,6 @@
 """不使用真实签名凭据，验证发布边界和嵌套签名顺序。"""
 import importlib.util
+import os
 import plistlib
 import shutil
 import tempfile
@@ -151,9 +152,62 @@ class ReleaseTests(unittest.TestCase):
         self.assertTrue(any("import ssl, sqlite3" in args and "-B" in args for args in calls))
         self.assertEqual(sum(args[:4] == ("codesign", "--verify", "--deep", "--strict") for args in calls), 2)
 
-    def test_formal_package_requires_download_url(self):
-        with self.assertRaisesRegex(ValueError, "下载地址"):
-            release.package(self.app, "Developer ID Application: Test", "profile", self.root / "output", None)
+    def test_formal_package_defaults_identity_profile_and_download_url(self):
+        calls = []
+        def command(*args):
+            calls.append(args)
+            if args[0] == "lipo":
+                return "arm64"
+            if args[0].endswith("/node"):
+                return "v24.21.0"
+            if args[0].endswith("/python3.14"):
+                return "Python 3.14.7"
+            if args[0] == "security":
+                return '  1) ABCDEF "Developer ID Application: Test (TEAM)"'
+            if args[0] == "file":
+                return "Mach-O 64-bit executable arm64"
+            if args[0] == "ditto" and len(args) == 3:
+                shutil.copytree(args[1], args[2], symlinks=True)
+            if args[:2] == ("hdiutil", "create"):
+                Path(args[-1]).write_bytes(b"test dmg")
+            return ""
+        output = self.root / "output"
+        with patch.object(release, "run", side_effect=command), patch.object(release, "notarize") as notary:
+            release.package(self.app, "", "", output, None)
+        signing = [args for args in calls if args[0] == "codesign" and "--sign" in args]
+        self.assertTrue(all(args[args.index("--sign") + 1] == "Developer ID Application: Test (TEAM)"
+                            for args in signing))
+        self.assertEqual([call.args[1] for call in notary.call_args_list], ["LeapNotary", "LeapNotary"])
+        metadata = release.json.loads((output / "Leap-1.2.0-release.json").read_text())
+        self.assertEqual(metadata["downloadURL"],
+                         "https://github.com/yuyedaidao/leap-releases/releases/download/v1.2.0/Leap-1.2.0-arm64.dmg")
+        self.assertTrue(metadata["notarized"])
+
+    def test_default_app_picks_newest_release_build(self):
+        old = self.root / "runs/old/Leap.app"
+        new = self.root / "runs/new/Leap.app"
+        for path in (old, new):
+            path.mkdir(parents=True)
+        os.utime(old, (1_000, 1_000))
+        os.utime(new, (2_000, 2_000))
+        with patch.object(release, "APP_SEARCH", ((self.root, "runs/*/Leap.app"),)):
+            self.assertEqual(release.default_app(), new)
+        with patch.object(release, "APP_SEARCH", ()):
+            with self.assertRaisesRegex(ValueError, "Leap.app"):
+                release.default_app()
+
+    def test_main_uses_default_app_when_omitted(self):
+        with patch.object(release, "default_app", return_value=self.app), \
+                patch.object(release, "package") as package, \
+                patch.object(release.sys, "argv", ["package-release.py"]):
+            self.assertEqual(release.main(), 0)
+        self.assertEqual(package.call_args.args[0], self.app.resolve())
+
+    def test_output_defaults_to_build_directory(self):
+        with patch.object(release, "package") as package, \
+                patch.object(release.sys, "argv", ["package-release.py", str(self.app)]):
+            self.assertEqual(release.main(), 0)
+        self.assertEqual(package.call_args.args[3], Path("build").resolve())
 
 
 if __name__ == "__main__":

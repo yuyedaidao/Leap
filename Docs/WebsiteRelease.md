@@ -66,7 +66,7 @@ xcodebuild build -workspace Leap.xcworkspace -scheme Leap \
   -derivedDataPath /private/tmp/leap-release-build CODE_SIGNING_ALLOWED=NO
 ```
 
-运行 `python3 Scripts/package-release.py --help` 查看参数。传入构建的 `Leap.app`、钥匙串中完整的 Developer ID Application 名称、公证配置名称、未使用的输出目录，以及已确认的 HTTPS 版本化 DMG 下载地址。
+运行 `python3 Scripts/package-release.py --help` 查看参数。所有参数都有默认值：应用路径省略时查找最近的 Release 构建产物，证书取钥匙串中唯一的 Developer ID Application，公证配置默认 `LeapNotary`，输出目录默认 `./build`（不入库，产物仅用于上传和验收，不要提交）。正式包的下载地址省略时按默认 GitHub 下载仓库生成；改用 COS 等其他渠道时必须显式传 `--download-url`。
 
 工具会在临时副本中执行以下流程，不修改原始构建：
 

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""在临时副本中签名、公证并生成发行 DMG，始终保留原始构建。"""
+"""在临时副本中签名、公证并生成发行 DMG，始终保留原始构建。
+
+省略应用路径时自动查找最近的 Release 构建；证书取钥匙串中唯一的 Developer ID，
+公证配置默认 LeapNotary，下载地址按默认 GitHub 下载仓库生成，产物写入 ./build。
+"""
 import argparse
 import hashlib
 import json
@@ -13,8 +17,40 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_RELEASE_REPO = "yuyedaidao/leap-releases"
+DEFAULT_NOTARY_PROFILE = "LeapNotary"
+# 已知 Release 产物位置；按修改时间取最新一个，避免默认值命中过期构建。
+APP_SEARCH = (
+    (ROOT, "build/releases/run-*/DerivedData/Build/Products/Release/Leap.app"),
+    (Path.home(), "Library/Developer/Xcode/DerivedData/Leap-*/Build/Products/Release/Leap.app"),
+    (Path("/private/tmp"), "leap-release-build/Build/Products/Release/Leap.app"),
+)
+
+
 def run(*args):
     return subprocess.run(args, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def default_app():
+    candidates = []
+    for base, pattern in APP_SEARCH:
+        candidates.extend(path for path in base.glob(pattern)
+                          if path.is_dir() and path.suffix == ".app")
+    if not candidates:
+        raise ValueError("未找到 Release 构建的 Leap.app，请显式传入应用路径。")
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def default_download_url(version):
+    return (f"https://github.com/{DEFAULT_RELEASE_REPO}/releases/download/"
+            f"v{version}/Leap-{version}-arm64.dmg")
+
+
+def validate_download_url(download_url):
+    url = urlsplit(download_url)
+    if url.scheme != "https" or not url.hostname or url.username or url.password or not url.path.endswith(".dmg"):
+        raise ValueError("下载地址必须是无凭据的 HTTPS DMG 地址。")
 
 
 def inspect_app(app, download_url):
@@ -32,9 +68,7 @@ def inspect_app(app, download_url):
     if list(app.rglob("*.debug.dylib")) or list(app.rglob("__preview.dylib")):
         raise ValueError("不能发布 Debug/预览构建，请使用 Release 配置。")
     if download_url:
-        url = urlsplit(download_url)
-        if url.scheme != "https" or not url.hostname or url.username or url.password or not url.path.endswith(".dmg"):
-            raise ValueError("下载地址必须是无凭据的 HTTPS DMG 地址。")
+        validate_download_url(download_url)
     minimum = info.get("LSMinimumSystemVersion", "")
     if minimum not in ("26.0", "26.0.0"):
         raise ValueError("应用最低系统版本必须与官网的 macOS 26.0 一致。")
@@ -118,14 +152,23 @@ def package(app, identity, profile, output, download_url, test=False):
         identity = "-"
         print("测试包：仅临时签名，不经过 Apple 公证，可能被 Gatekeeper 拦截。", flush=True)
     else:
-        if not download_url:
-            raise ValueError("正式发行包必须指定下载地址。")
-        if not identity.startswith("Developer ID Application:") or not profile.strip():
-            raise ValueError("必须指定 Developer ID Application 身份和钥匙串公证配置。")
-        identities = run("security", "find-identity", "-v", "-p", "codesigning")
-        if f'"{identity}"' not in identities:
+        profile = profile.strip() or DEFAULT_NOTARY_PROFILE
+        identities = re.findall(r'"(Developer ID Application:[^"]+)"',
+                                run("security", "find-identity", "-v", "-p", "codesigning"))
+        if not identity:
+            if len(identities) > 1:
+                raise ValueError("钥匙串中有多张 Developer ID Application 证书，请用 --identity 指定。")
+            if not identities:
+                raise ValueError("钥匙串中没有有效的 Developer ID Application 证书。")
+            identity = identities[0]
+            print(f"自动选择证书：{identity}", flush=True)
+        if identity not in identities:
             raise ValueError("钥匙串中不存在指定的有效 Developer ID Application 证书。")
     version = inspect_app(app, download_url)
+    if not test and not download_url:
+        download_url = default_download_url(version)
+        validate_download_url(download_url)
+        print(f"未指定 --download-url，使用默认下载地址：{download_url}", flush=True)
     output.mkdir(parents=True, exist_ok=True)
     destination = output / f"Leap-{version}-arm64{'-test' if test else ''}.dmg"
     metadata_path = output / f"Leap-{version}-release.json"
@@ -184,15 +227,18 @@ def package(app, identity, profile, output, download_url, test=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("app", type=Path)
+    parser.add_argument("app", nargs="?", type=Path, help="Release 构建的 Leap.app；省略时查找最近的构建产物")
     parser.add_argument("--test", action="store_true", help="仅生成临时签名、未公证的测试 DMG")
-    parser.add_argument("--identity", default="")
-    parser.add_argument("--notary-profile", default="")
-    parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--download-url", help="正式发行必填；本地测试包可省略")
+    parser.add_argument("--identity", default="", help="Developer ID Application 身份；省略时自动选择唯一证书")
+    parser.add_argument("--notary-profile", default=DEFAULT_NOTARY_PROFILE,
+                        help=f"钥匙串公证配置，默认 {DEFAULT_NOTARY_PROFILE}")
+    # 默认输出到仓库根的 ./build；该目录已在 .gitignore 中，产物不入库。
+    parser.add_argument("--output", type=Path, default=Path("build"), help="输出目录，默认 ./build")
+    parser.add_argument("--download-url", help="正式包下载地址；省略时按默认 GitHub 下载仓库生成")
     args = parser.parse_args()
     try:
-        package(args.app.resolve(), args.identity, args.notary_profile,
+        app = (args.app or default_app()).resolve()
+        package(app, args.identity, args.notary_profile,
                 args.output.resolve(), args.download_url, test=args.test)
     except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         print(f"发行失败：{error}", file=sys.stderr)
