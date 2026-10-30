@@ -11,6 +11,7 @@ struct NativeResultList<Item: Identifiable, Row: View>: View {
         ScrollViewReader { proxy in
             List { rows }
             .listStyle(.plain)
+            .padding(.horizontal, -8) // 与 macOS List 保持一致
             .scrollContentBackground(.hidden)
             .contentMargins(0, for: .scrollContent)
             .environment(\.defaultMinListRowHeight, 52)
@@ -42,6 +43,7 @@ struct NativeResultList<Item: Identifiable, Row: View>: View {
                     rowHeights[item.id] = height
                 }
                 .padding(.bottom, index == items.count - 1 ? 0 : 4)
+                // 清除系统行内边距，使实际行高与列表高度计算一致。
                 .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)

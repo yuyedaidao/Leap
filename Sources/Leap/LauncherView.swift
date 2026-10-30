@@ -55,7 +55,7 @@ struct LauncherView: View {
                 }
             }
         }
-        .padding(20)
+        .padding()
         .frame(width: 800)
         // 整个启动器共用一层原生玻璃，避免列表和插件内容叠加玻璃影响可读性。
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
