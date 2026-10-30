@@ -263,7 +263,7 @@ struct LauncherShellTests {
         let cacheURL = root.appendingPathComponent("index.json")
         try SystemApplicationIndexCache.save(applications, to: cacheURL)
         #expect(SystemApplicationIndexCache.load(from: cacheURL) == applications)
-        for version in [2, 3] {
+        for version in [2, 3, 4] {
             try Data("{\"version\":\(version),\"applications\":[]}".utf8).write(to: cacheURL)
             #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
         }

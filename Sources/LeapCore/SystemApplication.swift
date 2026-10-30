@@ -9,6 +9,7 @@ public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Send
     public let normalizedName: String
     public let pinyin: String
     public let pinyinInitials: String
+    private let searchIndexes: [SearchTextIndex]
 
     public var id: String { bundleIdentifier ?? path }
     public var url: URL { URL(fileURLWithPath: path) }
@@ -20,50 +21,29 @@ public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Send
         path = url.standardizedFileURL.resolvingSymlinksInPath().path
         normalizedName = Self.normalize(name)
 
-        // 本地化名称用于显示，未本地化名称仅作为检索别名，避免重复索引同一文本。
-        var indexedNames = Set<String>()
-        if !normalizedName.isEmpty { indexedNames.insert(normalizedName) }
+        // 同一原文可能有不同分词（visualstudiocode / Visual Studio Code），不能只按去空格名称去重。
+        let primaryIndex = SearchTextIndex(name)
+        var indexes = [primaryIndex]
+        var indexedNames: Set<SearchTextIndex> = [primaryIndex]
         self.alternateNames = alternateNames.filter { alternateName in
-            let normalized = Self.normalize(alternateName)
-            return !normalized.isEmpty && indexedNames.insert(normalized).inserted
+            let index = SearchTextIndex(alternateName)
+            guard !index.normalized.isEmpty, indexedNames.insert(index).inserted else { return false }
+            indexes.append(index)
+            return true
         }
-
-        let latin = name.applyingTransform(.toLatin, reverse: false) ?? name
-        pinyin = Self.normalize(latin)
-        pinyinInitials = latin
-            .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
-            .compactMap(\.first)
-            .map(String.init)
-            .joined()
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        searchIndexes = indexes
+        pinyin = searchIndexes[0].pinyin
+        pinyinInitials = searchIndexes[0].initials
     }
 
     /// 数值越小表示文本匹配越直接，调用方再以使用记录解决同级排序。
     public func matchRank(for query: String) -> Int? {
-        let query = Self.normalize(query)
-        guard !query.isEmpty else { return nil }
-        let bundleID = Self.normalize(bundleIdentifier ?? "")
-        let names = [normalizedName] + alternateNames.map(Self.normalize)
-
-        if names.contains(query) { return 0 }
-        if names.contains(where: { $0.hasPrefix(query) }) { return 1 }
-        if names.contains(where: { $0.contains(query) }) { return 2 }
-        if bundleID.hasPrefix(query) { return 3 }
-        if bundleID.contains(query) { return 4 }
-        if pinyin == query { return 5 }
-        if pinyin.hasPrefix(query) { return 6 }
-        if pinyin.contains(query) { return 7 }
-        if pinyinInitials.hasPrefix(query) { return 8 }
-        return nil
+        (searchIndexes.compactMap { $0.matchRank(for: query) } +
+            [SearchTextIndex.identifierRank(bundleIdentifier, for: query)].compactMap { $0 }).min()
     }
 
     public static func normalize(_ value: String) -> String {
-        value
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .unicodeScalars
-            .filter { CharacterSet.alphanumerics.contains($0) }
-            .map(String.init)
-            .joined()
+        SearchTextIndex.normalize(value)
     }
 }
 
@@ -228,7 +208,8 @@ public enum SystemApplicationIndexCache {
         let applications: [SystemApplicationDescriptor]
     }
 
-    private static let version = 4
+    // 检索字段和分词规则变化后使旧快照失效，避免继续使用旧拼音键。
+    private static let version = 5
 
     public static func load(from url: URL, fileManager: FileManager = .default) -> [SystemApplicationDescriptor]? {
         guard fileManager.fileExists(atPath: url.path),

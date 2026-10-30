@@ -92,7 +92,7 @@ final class LauncherModel {
     private var actionID: UUID?
     private var invocationRevision = 0
     private var foregroundShellTask: ShellScriptTask?
-    private var contentMatchers: [String: PluginCommandMatcher] = [:]
+    private var commandMatchers: [String: PluginCommandMatcher] = [:]
 
     var query = ""
     var selectedSearchResultID: LauncherItem.ID?
@@ -173,8 +173,8 @@ final class LauncherModel {
 
     func reloadPlugins() {
         commands = fixtureCommands ?? catalog?.load() ?? []
-        contentMatchers = Dictionary(uniqueKeysWithValues: commands.map { command in
-            (command.id, PluginCommandMatcher(command: configuration(for: command)))
+        commandMatchers = Dictionary(uniqueKeysWithValues: commands.map { command in
+            (command.id, PluginCommandMatcher(command: configuration(for: command), pluginName: command.pluginName))
         })
         if let interaction, !commands.contains(where: { $0 == interaction.command }) { exitInteraction() }
         if let fixtureApplications { applications = fixtureApplications }
@@ -272,7 +272,7 @@ final class LauncherModel {
         if configuration.mode == .interactive {
             exitInteraction()
             let initialInput = keywordMatchRank(command, query: query) == nil &&
-                contentMatchers[command.id]?.matchesContent(query) == true ? query : ""
+                commandMatchers[command.id]?.matchesContent(query) == true ? query : ""
             interaction = PluginInteractionSession(
                 command: command, configuration: configuration,
                 previousSearch: query, initialInput: initialInput, executor: scriptExecutor,
@@ -403,22 +403,11 @@ final class LauncherModel {
 
     private func pluginMatchRank(_ command: PluginCommandDescriptor, query: String) -> Int? {
         keywordMatchRank(command, query: query) ??
-            (contentMatchers[command.id]?.matchesContent(self.query) == true ? 5 : nil)
+            (commandMatchers[command.id]?.matchesContent(self.query) == true ? SearchMatchRank.content.rawValue : nil)
     }
 
     private func keywordMatchRank(_ command: PluginCommandDescriptor, query: String) -> Int? {
-        let query = SystemApplicationDescriptor.normalize(query)
-        guard !query.isEmpty else { return nil }
-        let title = SystemApplicationDescriptor.normalize(command.title)
-        let pluginName = SystemApplicationDescriptor.normalize(command.pluginName)
-        let commandID = SystemApplicationDescriptor.normalize(command.commandID)
-        let names = [title] + (configuration(for: command).keywords ?? []).map(SystemApplicationDescriptor.normalize)
-        if names.contains(query) { return 0 }
-        if names.contains(where: { $0.hasPrefix(query) }) { return 1 }
-        if names.contains(where: { $0.contains(query) }) { return 2 }
-        if pluginName.hasPrefix(query) || commandID.hasPrefix(query) { return 3 }
-        if pluginName.contains(query) || commandID.contains(query) { return 4 }
-        return nil
+        commandMatchers[command.id]?.keywordMatchRank(for: query)
     }
 
     private static func launchSystemApplication(at url: URL) async throws {

@@ -2,12 +2,21 @@ import Foundation
 
 /// 安装索引刷新时编译规则，输入变化时只匹配，不启动插件进程。
 public struct PluginCommandMatcher {
+    private let textIndexes: [SearchTextIndex]
+    private let commandID: String
     private let rules: [(PluginManifest.Command.Match, NSRegularExpression?)]
 
-    public init(command: PluginManifest.Command) {
+    public init(command: PluginManifest.Command, pluginName: String = "") {
+        textIndexes = ([pluginName, command.title] + (command.keywords ?? [])).map(SearchTextIndex.init)
+        commandID = command.id
         rules = (command.matches ?? []).map { match in
             (match, match.pattern.flatMap { try? NSRegularExpression(pattern: $0) })
         }
+    }
+
+    public func keywordMatchRank(for query: String) -> Int? {
+        (textIndexes.compactMap { $0.matchRank(for: query) } +
+            [SearchTextIndex.identifierRank(commandID, for: query)].compactMap { $0 }).min()
     }
 
     public func matchesContent(_ text: String) -> Bool {

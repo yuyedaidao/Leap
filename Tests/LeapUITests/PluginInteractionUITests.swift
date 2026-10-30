@@ -5,6 +5,38 @@ import XCTest
 
 final class PluginInteractionUITests: XCTestCase {
     @MainActor
+    func testPinyinEntryClearsInputButContentEntryPreservesIt() throws {
+        let script = """
+        leap.onInputChange(({text,setList}) => {
+          setList([{id:'query',title:text ? 'query: '+text : 'query: EMPTY'}]);
+        });
+        """
+        let app = try launch(source: "NumberEnumeration", pluginName: "剪切板", script: script, matchesText: true)
+        let search = app.textFields["launcher.searchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.click()
+        search.typeText("jianqb")
+        let command = app.buttons["launcher.command.com.padding.leap.number-enumeration/number.enumerate"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        command.click()
+        let parameter = app.textFields["plugin.parameterInput"]
+        XCTAssertTrue(parameter.waitForExistence(timeout: 5))
+        XCTAssertEqual(parameter.value as? String, "")
+        XCTAssertTrue(app.buttons["plugin.result.query"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["plugin.result.query"].label.contains("query: EMPTY"))
+        app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertEqual(search.value as? String, "jianqb")
+        search.click()
+        search.typeKey("a", modifierFlags: .command)
+        search.typeText("unmatched content")
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        command.click()
+        XCTAssertTrue(parameter.waitForExistence(timeout: 5))
+        XCTAssertEqual(parameter.value as? String, "unmatched content")
+    }
+
+    @MainActor
     func testNumericShortcutsTitleSubtitlesAndExplicitLoading() throws {
         let script = """
         leap.onInputChange(async ({setList}) => {
@@ -348,7 +380,8 @@ final class PluginInteractionUITests: XCTestCase {
     @MainActor
     private func launch(
         source: String, action: Bool = false, events: Bool = false,
-        pluginName: String? = nil, inputEnabled: Bool = true, openPlugin: Bool = false, script: String? = nil
+        pluginName: String? = nil, inputEnabled: Bool = true, openPlugin: Bool = false, script: String? = nil,
+        matchesText: Bool = false
     ) throws -> XCUIApplication {
         continueAfterFailure = false
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("LeapInteractionUI-\(UUID())")
@@ -358,13 +391,14 @@ final class PluginInteractionUITests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try FileManager.default.copyItem(at: project.appendingPathComponent("Examples/Plugins/\(source)"), to: directory)
         let manifestURL = directory.appendingPathComponent("manifest.json")
-        if action || events || pluginName != nil {
+        if action || events || pluginName != nil || matchesText {
             let data = try Data(contentsOf: manifestURL)
             var manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             let commands = try XCTUnwrap(manifest["commands"] as? [[String: Any]])
             var command = try XCTUnwrap(commands.first)
             command["mode"] = action ? "action" : "interactive"
             if let pluginName { manifest["name"] = pluginName }
+            if matchesText { command["matches"] = [["type": "text"]] }
             if events {
                 command["presentation"] = "web"
                 command["input"] = ["enabled": inputEnabled]
