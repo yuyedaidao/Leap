@@ -11,10 +11,5 @@ build/
 .runtime-cache/
 Resources/Leap/Runtimes/node-*/
 Resources/Leap/Runtimes/python-*/
-Website/node_modules/
-Website/.astro/
-Website/dist/
-Website/public/reference/
-Website/src/generated/
 Scripts/__pycache__/
 Tests/Release/__pycache__/

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""本机构建 Leap，打包并发布到独立的 GitHub 下载仓库。"""
+"""本机构建 Leap，打包并发布到 GitHub Releases。"""
 import argparse
 import hashlib
 import json
@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_REPO = "yuyedaidao/leap-releases"
+DEFAULT_REPO = "yuyedaidao/Leap"
 
 
 def run(*args, log=None):
@@ -60,12 +60,9 @@ def check_repo(repo):
         raise ValueError("仓库必须使用 owner/repo 格式。")
     data = github(f"repos/{repo}")
     if data is None:
-        login = run("gh", "api", "user", "--jq", ".login")
-        if repo != DEFAULT_REPO or login != repo.split("/")[0]:
-            raise ValueError("目标仓库不可访问；只有当前账号的默认下载仓库可以自动创建。")
-        return None
+        raise ValueError("发行仓库不存在或不可访问，请先创建源码仓库。")
     if data.get("private") or data.get("archived") or data.get("disabled"):
-        raise ValueError("下载仓库必须公开且可写；脚本不会修改仓库可见性。")
+        raise ValueError("发行仓库必须公开且可写；脚本不会修改仓库可见性。")
     if not data.get("permissions", {}).get("push"):
         raise ValueError("当前 GitHub 账号没有目标仓库的写入权限。")
     return data
@@ -218,19 +215,13 @@ def release(args):
         warning = "\n\n测试包：未经过 Apple 公证，可能被 Gatekeeper 拦截。" if args.test else ""
         notes.write_text(f"{supplied}{warning}\n\n版本：{version}（构建 {build}）\n"
                          f"系统要求：macOS 26+ / Apple Silicon\n源码提交：{commit}\n"
-                         f"{'本地测试包包含 source.patch 中的未提交改动。' if args.local_only and args.test else '发行标签不代表应用源码。'}\n\n"
+                         f"{'本地测试包包含 source.patch 中的未提交改动。' if args.local_only and args.test else '发行标签指向本次发行的源码提交。'}\n\n"
                          f"DMG SHA256：`{sha256(dmg)}`\n", encoding="utf-8")
         if args.local_only:
             print(f"本地安装包已生成：{dmg}\n校验文件：{checksum}\n未上传或发布。", flush=True)
             return
-        if repository is None:
-            # 不传 --source、--push 或 --remote，避免将私有源码同步到下载仓库。
-            run("gh", "repo", "create", args.repo, "--public", "--add-readme", "--description", "Leap macOS 应用下载")
-        repository = check_repo(args.repo)
-        if repository is None:
-            raise ValueError("下载仓库创建后仍无法访问。")
-        target = run("gh", "api", f"repos/{args.repo}/commits/{repository['default_branch']}", "--jq", ".sha")
-        url = publish(args.repo, tag, args.test, [dmg, metadata, checksum], notes, target)
+        # 发行仓库就是源码仓库：标签指向本地已验证的 HEAD，即被构建的源码提交。
+        url = publish(args.repo, tag, args.test, [dmg, metadata, checksum], notes, commit)
         print(f"发布成功：{url}\nDMG 下载：{download_url}\n本地产物：{output}", flush=True)
     except (ValueError, OSError, subprocess.CalledProcessError):
         print(f"本次失败；产物和日志保留在 {output}，请查看 build.log。", file=sys.stderr)
@@ -241,7 +232,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test", action="store_true", help="发布临时签名、未公证的预发布版本")
     parser.add_argument("--local-only", action="store_true", help="仅生成本地安装包，不连接 GitHub；搭配 --test 可打包未提交改动")
-    parser.add_argument("--repo", default=DEFAULT_REPO, help="独立公开下载仓库，格式 owner/repo")
+    parser.add_argument("--repo", default=DEFAULT_REPO, help="发布 Releases 的仓库，格式 owner/repo")
     parser.add_argument("--notes-file", type=Path, help="UTF-8 更新说明文件")
     args = parser.parse_args()
     try:

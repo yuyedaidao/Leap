@@ -53,10 +53,10 @@ class PublishTests(unittest.TestCase):
             with patch.object(release, "github", return_value=data):
                 with self.assertRaises(ValueError):
                     release.check_repo("test/downloads")
-        with patch.object(release, "github", return_value=None), patch.object(release, "run", return_value="yuyedaidao"):
-            self.assertIsNone(release.check_repo(release.DEFAULT_REPO))
+        # 发行仓库即源码仓库，不存在时直接报错，不再自动创建
+        with patch.object(release, "github", return_value=None):
             with self.assertRaises(ValueError):
-                release.check_repo("someone/missing")
+                release.check_repo(release.DEFAULT_REPO)
         with self.assertRaises(ValueError):
             release.check_repo("../repo")
 

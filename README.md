@@ -1,6 +1,12 @@
 # Leap
 
+<p align="center"><img src="Docs/media/icon.png" width="128" alt="Leap 图标"></p>
+
 macOS 26+ / Apple Silicon 上的快速启动器：按 `⌥⌘L` 唤起搜索框，输入关键词打开应用、运行本地插件。插件可用 JavaScript、Python 或 Shell 编写，Node.js 与 Python 运行时随应用提供。
+
+## 下载
+
+安装包以 Release 形式发布在[本仓库 Releases](https://github.com/yuyedaidao/Leap/releases)。尚未发布正式版时可按下文自行构建。
 
 ## 环境要求
 
@@ -52,7 +58,7 @@ python3 Scripts/publish-release.py --local-only --test
 ./Scripts/publish-release.py
 ```
 
-需要有效的 Developer ID Application 证书与 `LeapNotary` 公证配置、`gh` 登录，且 Git 工作区干净。脚本会构建、签名、公证并发布到 GitHub 下载仓库；失败恢复、安装包验收与官网更新步骤见[发行手册](Docs/WebsiteRelease.md)。
+需要有效的 Developer ID Application 证书与 `LeapNotary` 公证配置、`gh` 登录，且 Git 工作区干净。脚本会构建、签名、公证，并以 Release 形式发布到本仓库。
 
 ## 只打包已有应用
 
@@ -72,12 +78,15 @@ python3 Scripts/package-release.py
 | `--identity` | 钥匙串中唯一的 Developer ID Application 证书 |
 | `--notary-profile` | `LeapNotary` |
 | `--output` | `./build` |
-| `--download-url` | 按默认 GitHub 下载仓库与版本生成 |
+| `--download-url` | 按本仓库 Releases 与版本生成 |
 
-需要覆盖时显式传入，例如 `python3 Scripts/package-release.py --test --output /tmp/leap-dmg`。钥匙串中有多张证书、找不到 Release 构建，或改用 COS 等其他下载渠道时必须显式指定对应参数。正式包的下载地址一旦用于官网，就不能再替换同一 URL 的文件。
+需要覆盖时显式传入，例如 `python3 Scripts/package-release.py --test --output /tmp/leap-dmg`。钥匙串中有多张证书或找不到 Release 构建时必须显式指定对应参数。正式包的下载地址一旦公开发布，就不能再替换同一 URL 的文件。
 
 ## 相关文档
 
-- [应用发行手册](Docs/WebsiteRelease.md)
 - [插件开发](Docs/PluginDevelopment.md)
-- [官网开发与部署](Website/README.md)
+- [隐私说明](Docs/Privacy.md)
+
+## License
+
+[MIT](LICENSE)

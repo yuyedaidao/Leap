@@ -180,7 +180,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual([call.args[1] for call in notary.call_args_list], ["LeapNotary", "LeapNotary"])
         metadata = release.json.loads((output / "Leap-1.2.0-release.json").read_text())
         self.assertEqual(metadata["downloadURL"],
-                         "https://github.com/yuyedaidao/leap-releases/releases/download/v1.2.0/Leap-1.2.0-arm64.dmg")
+                         "https://github.com/yuyedaidao/Leap/releases/download/v1.2.0/Leap-1.2.0-arm64.dmg")
         self.assertTrue(metadata["notarized"])
 
     def test_default_app_picks_newest_release_build(self):

@@ -2,7 +2,7 @@
 """在临时副本中签名、公证并生成发行 DMG，始终保留原始构建。
 
 省略应用路径时自动查找最近的 Release 构建；证书取钥匙串中唯一的 Developer ID，
-公证配置默认 LeapNotary，下载地址按默认 GitHub 下载仓库生成，产物写入 ./build。
+公证配置默认 LeapNotary，下载地址按本仓库 Releases 与版本生成，产物写入 ./build。
 """
 import argparse
 import hashlib
@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RELEASE_REPO = "yuyedaidao/leap-releases"
+DEFAULT_RELEASE_REPO = "yuyedaidao/Leap"
 DEFAULT_NOTARY_PROFILE = "LeapNotary"
 # 已知 Release 产物位置；按修改时间取最新一个，避免默认值命中过期构建。
 APP_SEARCH = (
@@ -71,7 +71,7 @@ def inspect_app(app, download_url):
         validate_download_url(download_url)
     minimum = info.get("LSMinimumSystemVersion", "")
     if minimum not in ("26.0", "26.0.0"):
-        raise ValueError("应用最低系统版本必须与官网的 macOS 26.0 一致。")
+        raise ValueError("应用最低系统版本必须是 macOS 26.0。")
     executable = info.get("CFBundleExecutable", "")
     if not isinstance(executable, str) or not executable or Path(executable).name != executable or executable in (".", ".."):
         raise ValueError("应用主可执行文件名称无效。")
@@ -222,7 +222,7 @@ def package(app, identity, profile, output, download_url, test=False):
             metadata["downloadURL"] = download_url
         dmg.rename(destination)
         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-    print(f"发行包已生成：{destination}\n候选元数据：{metadata_path}\n上传校验并完成安装验收后，再更新 Website/release.json。")
+    print(f"发行包已生成：{destination}\n候选元数据：{metadata_path}\n上传 Release 并回读校验、完成安装验收后再公开。")
 
 
 def main():
@@ -234,7 +234,7 @@ def main():
                         help=f"钥匙串公证配置，默认 {DEFAULT_NOTARY_PROFILE}")
     # 默认输出到仓库根的 ./build；该目录已在 .gitignore 中，产物不入库。
     parser.add_argument("--output", type=Path, default=Path("build"), help="输出目录，默认 ./build")
-    parser.add_argument("--download-url", help="正式包下载地址；省略时按默认 GitHub 下载仓库生成")
+    parser.add_argument("--download-url", help="正式包下载地址；省略时按本仓库 Releases 与版本生成")
     args = parser.parse_args()
     try:
         app = (args.app or default_app()).resolve()
