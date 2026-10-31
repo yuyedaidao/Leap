@@ -47,9 +47,10 @@ struct PluginInteractionManifestTests {
             try PluginManifestValidator().validate(manifest(.init(id: "run", title: "运行", mode: .interactive,
                                                                 presentation: .list), runtime: .shell), in: root)
         }
-        for version in ["9.0.0", "1.1", "1..0", "abc"] {
+        for version in ["999.0.0", "1.1", "1..0", "abc"] {
             #expect(throws: PluginManifestValidator.ValidationError.unsupportedHostVersion) {
-                try PluginManifestValidator().validate(manifest(.init(id: "run", title: "运行"), version: version), in: root)
+                try PluginManifestValidator().validate(manifest(.init(id: "run", title: "运行"),
+                                                              version: version), in: root)
             }
         }
     }
@@ -83,7 +84,8 @@ struct PluginInteractionManifestTests {
     }
 
     private func manifest(
-        _ command: PluginManifest.Command, runtime: PluginManifest.Runtime = .javascript, version: String = "1.1.0"
+        _ command: PluginManifest.Command, runtime: PluginManifest.Runtime = .javascript,
+        version: String? = nil
     ) -> PluginManifest {
         .init(id: "test", name: "Test", version: "1.0.0", runtime: runtime, entry: "main.js",
               commands: [command], webEntry: runtime == .shell ? nil : "index.html", minimumHostVersion: version)

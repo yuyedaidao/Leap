@@ -77,8 +77,13 @@ test('空数组、重复ID、非法组合及匹配边界均在写入前拒绝', 
       .map(rule => [{ interaction: 'action', matches: [{ type: 'text', ...rule }] }]),
   ];
   for (const commands of invalid) assert.throws(() => generate({ ...input, commands }));
-  for (const minimumHostVersion of ['1.0.0', '1.3.0', 'invalid']) {
+  for (const minimumHostVersion of ['1.1', '1.2.3.4', 'invalid', 1]) {
     assert.throws(() => generate({ ...input, minimumHostVersion }));
+  }
+  // 留空或合法三段数字都允许，模板本身不固定宿主版本。
+  for (const minimumHostVersion of ['', '0.0.1', '9.9.9']) {
+    const manifest = validate({ ...input, minimumHostVersion, commands: [{ interaction: 'action' }] });
+    assert.equal(manifest.minimumHostVersion, minimumHostVersion || undefined);
   }
   assert.throws(() => generate({ ...input, id: 'a..b' }));
   assert.deepEqual(fs.readdirSync(input.directory), []);
@@ -140,5 +145,5 @@ test('新命令数组优先于旧参数，Shell缺省直接执行，官方ID不�
   const result = validate(input);
   assert.equal(result.commands[0].interaction, 'action');
   assert.equal(result.commands[0].id, 'shell.run');
-  assert.throws(() => validate({ ...input, id: 'com.padding.leap.template-generator' }), /官方内置插件保留/);
+  assert.throws(() => validate({ ...input, id: 'com.padding.leap.template-generator' }), /内置插件保留/);
 });

@@ -1,6 +1,6 @@
 # Leap 插件开发指南
 
-适用于 Leap 1.2.0。JavaScript 和 Python 使用统一的会话协议；所有 JavaScript 业务入口由宿主自动注入全局 `leap`。无需 Electron、npm 或手动处理标准输入输出。
+适用于 Leap 0.0.1。JavaScript 和 Python 使用统一的会话协议；所有 JavaScript 业务入口由宿主自动注入全局 `leap`。无需 Electron、npm 或手动处理标准输入输出。
 
 ## 快速开始
 
@@ -36,7 +36,7 @@ SDK 随应用提供，插件无需复制运行时实现。入口采用 CommonJS�
   "id": "com.example.leap.hello",
   "name": "Hello 插件",
   "version": "1.0.0",
-  "minimumHostVersion": "1.2.0",
+  "minimumHostVersion": "0.0.1",
   "runtime": "javascript",
   "entry": "main.js",
   "commands": [
@@ -59,7 +59,7 @@ SDK 随应用提供，插件无需复制运行时实现。入口采用 CommonJS�
 | `id` | string / 是 | 非空；安装路径只接受字母、数字、`.`、`-`、`_`，不能含连续 `..`。同 ID 安装会更新已有插件。建议使用反向域名形式并保持稳定。 |
 | `name` | string / 是 | 去除首尾空白后不能为空；用于插件展示和搜索。 |
 | `version` | string / 是 | 去除首尾空白后不能为空；用于安装信任记录。宿主未强制语义版本格式，建议 `1.0.0`。 |
-| `minimumHostVersion` | string / 否 | 三段数字版本；不得高于当前宿主1.2.0。新模板显式声明1.2.0。 |
+| `minimumHostVersion` | string / 否 | 三段数字版本；不得高于当前宿主版本（运行时以 App 的 `CFBundleShortVersionString` 为准），可省略。 |
 | `runtime` | string / 是 | 只能是 `javascript`、`python`、`shell`。 |
 | `entry` | string / 是 | 已存在的目录内相对路径；不得为空、以 `/` 开头或包含 `..` 路径组件。提供实际脚本文件。 |
 | `commands` | array / 是 | 至少一个命令；同插件内命令 ID 不得重复。 |
@@ -282,7 +282,7 @@ Leap 只读取定位所需的目录元数据，并下载所选插件目录及其
 
 插件代码具有 Node/Python 本地权限，SDK 不构成文件系统沙箱。检查来源和业务校验，避免未确认输入直接用于路径、Shell 命令或网络操作。持久数据不要写入受管副本，更新和卸载会影响该目录。
 
-新示例与模板最低要求 Leap 1.2.0。当前处于开发阶段，已统一替换旧协议；现有开发副本需重新生成或改写入口并重新安装，不保留旧调用通道。
+新示例与模板不再声明最低宿主版本，避免与 App 版本漂移。当前处于开发阶段，已统一替换旧协议；现有开发副本需重新生成或改写入口并重新安装，不保留旧调用通道。
 
 ## 调试与内部通信
 

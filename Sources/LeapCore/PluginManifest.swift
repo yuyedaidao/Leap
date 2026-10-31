@@ -1,7 +1,9 @@
 import Foundation
 
 public struct PluginManifest: Codable, Equatable, Sendable {
-    public static let hostVersion = "1.2.0"
+    /// 版本单一来源是 Project.swift 的 CFBundleShortVersionString；测试进程没有 app Info.plist 时回退。
+    public static let hostVersion =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
     /// 单位为逻辑点：独立窗口为网页内容尺寸，内嵌高度包含宿主操作栏；均不含系统标题栏。
     public struct WebWindow: Codable, Equatable, Sendable {
         public let width: Int

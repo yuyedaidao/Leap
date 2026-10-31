@@ -16,7 +16,7 @@ test('JS/Python列表模板查询和选择使用不同协议且校验条目', as
     fs.mkdirSync(directory);
     generate({ directory, name: '列表', version: '1.0.0', runtime, interaction: 'list' });
     const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'manifest.json'), 'utf8'));
-    assert.equal(manifest.minimumHostVersion, '1.2.0');
+    assert.equal(manifest.minimumHostVersion, undefined);
     assert.equal(manifest.commands[0].mode, 'interactive');
     assert.equal(manifest.commands[0].presentation, 'list');
     assert.equal(manifest.webEntry, undefined);

@@ -42,7 +42,7 @@ struct PluginTemplateGeneratorTests {
         #expect(manifest.webWindow == (withUI ? .init(width: 800, height: 600) : nil))
         #expect(manifest.commands.first?.resolvedExecutionMode == .foreground)
         #expect(manifest.commands.first?.mode == (interaction == "action" ? .action : .interactive))
-        #expect(manifest.minimumHostVersion == "1.2.0")
+        #expect(manifest.minimumHostVersion == nil)
         let installer = PluginInstaller(paths: paths)
         let candidate = try installer.inspect(sourceDirectory: generatedDirectory)
         let installedDirectory = try installer.install(candidate, confirmed: true)

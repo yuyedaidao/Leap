@@ -115,7 +115,9 @@ function filesFor(data) {
   const files = {
     'manifest.json': JSON.stringify(manifest, null, 2) + '\n',
     [entry]: scriptFor(data.runtime, data.commands),
-    'README.md': `# ${data.name}\n\n版本：${data.version}，要求 Leap ${data.minimumHostVersion} 或以上。\n\n` +
+    // minimumHostVersion 留空时 JSON.stringify 自动省略，模板不再固定宿主版本。
+    'README.md': `# ${data.name}\n\n版本：${data.version}` +
+      (data.minimumHostVersion ? `，要求 Leap ${data.minimumHostVersion} 或以上` : '') + '。\n\n' +
       `在 Leap 设置 → 本地插件 → 安装本地插件中选择本目录并确认安装。${entry} 按命令 ID 分派请求。\n\n` +
       data.commands.map(command => `- ${command.title}（${command.id}）：${command.interaction}，${command.executionMode}`).join('\n') +
       '\n\n直接执行和网页按钮返回 hello；列表查询返回大小写转换候选，选择后返回转换结果。网页通过 onEnter 获取当前命令，通过输入和提交事件接收顶部参数，退出时清理监听。\n\n' +

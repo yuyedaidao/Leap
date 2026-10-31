@@ -243,9 +243,7 @@ extension PluginHostAPI {
             defaults.set(value, forKey: "pluginNativeID")
             return .string(value)
         case "getAppName": return .string("Leap")
-        case "getAppVersion":
-            let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            return .string(version ?? PluginManifest.hostVersion)
+        case "getAppVersion": return .string(PluginManifest.hostVersion)
         case "getPath": return .string(try path(string(params, "name")))
         case "getFileIcon": return .string(try fileIcon(string(params, "filePath")))
         case "isMacOS": return .bool(true)
