@@ -28,8 +28,8 @@ let project = Project(
             deploymentTargets: .macOS("26.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "Leap",
-                "CFBundleShortVersionString": "1.2.0",
-                "CFBundleVersion": "3",
+                "CFBundleShortVersionString": "0.0.1",
+                "CFBundleVersion": "1",
                 "NSAppleEventsUsageDescription": "Leap 插件可在你调用时读取 Finder 目录或浏览器当前标签页。",
             ]),
             sources: ["Sources/Leap/**"],
