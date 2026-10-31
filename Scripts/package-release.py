@@ -129,8 +129,16 @@ def sign_app(app, identity, work):
             args += ["--entitlements", str(node_entitlements)]
         run(*args, str(binary))
     # 内层代码先签，再封装 bundle；--deep 只用于验证，避免统一授权递归签名。
-    bundles = [item for item in app.rglob("*") if item.is_dir() and not item.is_symlink()
-               and item.suffix in (".app", ".framework", ".xpc", ".appex")]
+    def is_bundle(item):
+        if item.is_symlink() or not item.is_dir():
+            return False
+        if item.suffix in (".app", ".framework", ".xpc", ".appex"):
+            return True
+        # Python.framework/Versions/X 这类旧式 bundle 没有 Contents/，只能靠 Resources/Info.plist 识别。
+        # codesign 会把它和整棵资源树一起封存，因此必须最后整体重签，否则内层签名会破坏封印，公证报签名无效。
+        return (item / "Resources/Info.plist").is_file() and not (item / "Contents").exists()
+
+    bundles = [item for item in app.rglob("*") if is_bundle(item)]
     for bundle in sorted(bundles, key=lambda item: len(item.parts), reverse=True):
         run(*signing, str(bundle))
     run(*signing, "--entitlements", str(app_entitlements), str(app))
