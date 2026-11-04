@@ -184,23 +184,22 @@ class PublishTests(unittest.TestCase):
                 release.generate_update_feed(app, dmg, notes, "test/repo", "v1", self.root)
 
     def test_public_feed_must_be_available_and_match_release(self):
-        from unittest.mock import MagicMock
         feed = self.root / "appcast.xml"
         feed.write_bytes(b"current signed feed")
-        response = MagicMock()
-        response.__enter__.return_value = response
-        response.status = 200
-        response.read.return_value = feed.read_bytes()
-        with patch.object(release.urllib.request, "urlopen", return_value=response) as request:
-            release.verify_public_feed("test/repo", "v0.0.2", [feed])
-            self.assertNotIn("Authorization", request.call_args.args[0].headers)
-        for result in (OSError("HTTP 404"), b"old release feed"):
-            response.read.return_value = result
-            with patch.object(release.time, "sleep"), \
-                 patch.object(release.urllib.request, "urlopen", side_effect=result if isinstance(result, OSError) else None,
-                              return_value=response):
-                with self.assertRaisesRegex(ValueError, "线上订阅验收失败"):
+        for result in (None, OSError("HTTP 404"), b"old release feed"):
+            calls = []
+            def command(*args):
+                calls.append(args)
+                if isinstance(result, OSError):
+                    raise result
+                Path(args[args.index("--output") + 1]).write_bytes(result or feed.read_bytes())
+            with patch.object(release.time, "sleep"), patch.object(release, "run", side_effect=command):
+                if result is None:
                     release.verify_public_feed("test/repo", "v0.0.2", [feed])
+                else:
+                    with self.assertRaisesRegex(ValueError, "线上订阅验收失败"):
+                        release.verify_public_feed("test/repo", "v0.0.2", [feed])
+            self.assertTrue(all("Authorization" not in str(call) and "--insecure" not in call for call in calls))
 
     def publish_fixture(self, test, failure=None):
         files = [self.root / name for name in ("Leap.dmg", "release.json", "SHA256SUMS.txt")]

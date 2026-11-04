@@ -15,8 +15,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 
@@ -80,7 +78,7 @@ def preflight(args):
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         raise ValueError("发布脚本仅支持 Apple Silicon Mac。")
     commands = ("git", "tuist", "xcodebuild", "swiftlint", "codesign", "xcrun",
-                "hdiutil", "ditto", "file", "lipo", "otool", "install_name_tool", "security", "spctl")
+                "hdiutil", "ditto", "curl", "file", "lipo", "otool", "install_name_tool", "security", "spctl")
     for command in commands + (() if args.local_only else ("gh",)):
         if shutil.which(command) is None:
             raise ValueError(f"缺少必要工具：{command}")
@@ -144,14 +142,17 @@ def verify_public_feed(repo, tag, artifacts):
     url = f"https://github.com/{repo}/releases/latest/download/appcast.xml"
     for attempt in range(3):
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "Leap-Release-Validation"})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                actual = response.read(2 * 1024 * 1024 + 1)
-                if response.status != 200 or actual != expected:
+            # 系统 curl 使用本机证书信任配置，避免发行脚本所用 Python 缺少 CA 根证书。
+            with tempfile.TemporaryDirectory(prefix="leap-public-feed-") as temporary:
+                downloaded = Path(temporary) / "appcast.xml"
+                run("curl", "--fail", "--silent", "--show-error", "--location", "--proto", "=https",
+                    "--proto-redir", "=https", "--max-time", "30", "--max-filesize", "2097152",
+                    "--output", str(downloaded), url)
+                if downloaded.read_bytes() != expected:
                     raise ValueError("公开更新订阅与本次发行不一致。")
             print(f"公开更新订阅已验证：{tag} / {url}", flush=True)
             return
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, subprocess.CalledProcessError) as error:
             if attempt == 2:
                 raise ValueError(f"Release 已公开，但线上订阅验收失败：{error}") from error
             time.sleep(2)
