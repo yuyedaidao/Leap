@@ -81,5 +81,7 @@ let project = Project(
             sources: ["Tests/LeapUITests/**"],
             dependencies: [.target(name: "Leap")]
         )
-    ]
+    ],
+    // 资源由 SwiftUI 按名称读取，禁用旧版 Tuist 不兼容 Swift 6 的未使用资源包装类型。
+    resourceSynthesizers: []
 )
