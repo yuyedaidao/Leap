@@ -5,6 +5,22 @@ import XCTest
 
 final class SettingsWindowUITests: XCTestCase {
     @MainActor
+    func testAppUpdateSettingsAreAvailableWithoutNetwork() {
+        let app = launchForSettingsTest()
+        app.buttons["launcher.settingsButton"].click()
+        app.activate()
+        let toggle = app.descendants(matching: .any)["settings.autoUpdateToggle"].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), app.debugDescription)
+        let original = String(describing: toggle.value)
+        toggle.click()
+        XCTAssertNotEqual(String(describing: toggle.value), original)
+        app.descendants(matching: .any)["settings.section.about"].firstMatch.click()
+        let check = app.buttons["settings.checkForUpdatesButton"]
+        XCTAssertTrue(check.waitForExistence(timeout: 5))
+        XCTAssertFalse(check.isEnabled, "隔离 UI 测试不启动真实更新器。")
+    }
+
+    @MainActor
     func testDetailPagesUseSystemNavigationTitles() {
         let app = launchForSettingsTest()
         app.buttons["launcher.settingsButton"].click()
@@ -208,7 +224,8 @@ final class SettingsWindowUITests: XCTestCase {
         // 使用参数域覆盖测试快捷键，避免修改用户偏好或依赖用户自定义的按键组合。
         app.launchArguments += [
             "-leap-testing-support-directory", support.path,
-            "-globalHotKeyShortcut", "testing-default"
+            "-globalHotKeyShortcut", "testing-default",
+            "-automaticallyChecksForUpdatesOnLaunch", "YES"
         ]
         addTeardownBlock {
             app.terminate()

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """本机构建 Leap，打包并发布到 GitHub Releases。"""
 import argparse
+import base64
+import html
+import xml.etree.ElementTree as ET
 import hashlib
 import json
 import os
@@ -11,6 +14,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -132,6 +138,25 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def verify_public_feed(repo, tag, artifacts):
+    """匿名检查客户端真正使用的 latest 地址，不能仅依赖已认证的附件回读。"""
+    expected = next(path for path in artifacts if path.name == "appcast.xml").read_bytes()
+    url = f"https://github.com/{repo}/releases/latest/download/appcast.xml"
+    for attempt in range(3):
+        try:
+            request = urllib.request.Request(url, headers={"User-Agent": "Leap-Release-Validation"})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                actual = response.read(2 * 1024 * 1024 + 1)
+                if response.status != 200 or actual != expected:
+                    raise ValueError("公开更新订阅与本次发行不一致。")
+            print(f"公开更新订阅已验证：{tag} / {url}", flush=True)
+            return
+        except (OSError, ValueError) as error:
+            if attempt == 2:
+                raise ValueError(f"Release 已公开，但线上订阅验收失败：{error}") from error
+            time.sleep(2)
+
+
 def publish(repo, tag, test, artifacts, notes, target):
     print(f"上传 {repo} / {tag}…", flush=True)
     require_new_tag(repo, tag)
@@ -155,7 +180,66 @@ def publish(repo, tag, test, artifacts, notes, target):
               f"请检查 https://github.com/{repo}/releases；若已创建草稿，将缺少的附件上传后，"
               "按发行手册回读校验，再手动公开。脚本不会删除或覆盖远端附件。", file=sys.stderr)
         raise
+    if not test:
+        verify_public_feed(repo, tag, artifacts)
     return f"https://github.com/{repo}/releases/tag/{tag}"
+
+
+SPARKLE_NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+SPARKLE_ACCOUNT = "com.padding.leap.sparkle"
+
+
+def check_update_build(repo, build):
+    """旧发行版没有订阅文件时允许首次接入，其他网络错误仍应终止发行。"""
+    latest = github(f"repos/{repo}/releases/latest")
+    if latest is None:
+        return
+    assets = [asset for asset in latest.get("assets", []) if asset["name"] == "appcast.xml"]
+    if not assets:
+        return
+    feed = run("gh", "api", f"repos/{repo}/releases/assets/{assets[0]['id']}",
+               "-H", "Accept: application/octet-stream")
+    versions = ET.fromstring(feed).findall(f".//{{{SPARKLE_NAMESPACE}}}version")
+    if not versions or any(not (item.text or "").isdigit() for item in versions):
+        raise ValueError("远端更新订阅的构建号无效。")
+    if int(build) <= max(int(item.text) for item in versions):
+        raise ValueError("正式发行 CFBundleVersion 必须大于上一份更新订阅的构建号。")
+
+
+def generate_update_feed(app, dmg, notes, repo, tag, output):
+    tools = ROOT / "Tuist/.build/artifacts/sparkle/Sparkle/bin"
+    with (app / "Contents/Info.plist").open("rb") as source:
+        info = plistlib.load(source)
+    public_key = run(str(tools / "generate_keys"), "--account", SPARKLE_ACCOUNT, "-p")
+    if len(base64.b64decode(public_key, validate=True)) != 32 or public_key != info.get("SUPublicEDKey"):
+        raise ValueError("钥匙串更新签名公钥与应用 SUPublicEDKey 不匹配。")
+    expected_feed = f"https://github.com/{repo}/releases/latest/download/appcast.xml"
+    if info.get("SUFeedURL") != expected_feed:
+        raise ValueError("应用更新订阅地址与发行仓库不匹配。")
+    check_update_build(repo, info["CFBundleVersion"])
+    feed = output / "appcast.xml"
+    # 目录中只有最终公证 DMG，避免生成器误收集构建缓存或测试产物。
+    with tempfile.TemporaryDirectory(prefix="leap-appcast-", dir=output) as temporary:
+        archives = Path(temporary)
+        (archives / dmg.name).hardlink_to(dmg)
+        (archives / dmg.with_suffix(".html").name).write_text(
+            "<pre>" + html.escape(notes.read_text(encoding="utf-8")) + "</pre>", encoding="utf-8")
+        run(str(tools / "generate_appcast"), "--account", SPARKLE_ACCOUNT,
+            "--download-url-prefix", f"https://github.com/{repo}/releases/download/{tag}/",
+            "--maximum-deltas", "0", "--embed-release-notes", "--link",
+            f"https://github.com/{repo}/releases/tag/{tag}", "-o", str(feed), str(archives))
+    items = ET.parse(feed).findall("./channel/item")
+    if len(items) != 1:
+        raise ValueError("更新订阅必须且只能包含本次正式发行。")
+    item = items[0]
+    enclosure = item.find("enclosure")
+    expected_url = f"https://github.com/{repo}/releases/download/{tag}/{dmg.name}"
+    if (item.findtext(f"{{{SPARKLE_NAMESPACE}}}version") != info["CFBundleVersion"]
+            or enclosure is None or enclosure.get("url") != expected_url
+            or enclosure.get("length") != str(dmg.stat().st_size)
+            or not enclosure.get(f"{{{SPARKLE_NAMESPACE}}}edSignature")):
+        raise ValueError("生成的更新订阅版本、附件或签名不完整。")
+    return feed
 
 
 def release(args):
@@ -221,7 +305,10 @@ def release(args):
             print(f"本地安装包已生成：{dmg}\n校验文件：{checksum}\n未上传或发布。", flush=True)
             return
         # 发行仓库就是源码仓库：标签指向本地已验证的 HEAD，即被构建的源码提交。
-        url = publish(args.repo, tag, args.test, [dmg, metadata, checksum], notes, commit)
+        artifacts = [dmg, metadata, checksum]
+        if not args.test:
+            artifacts.append(generate_update_feed(app, dmg, notes, args.repo, tag, output))
+        url = publish(args.repo, tag, args.test, artifacts, notes, commit)
         print(f"发布成功：{url}\nDMG 下载：{download_url}\n本地产物：{output}", flush=True)
     except (ValueError, OSError, subprocess.CalledProcessError):
         print(f"本次失败；产物和日志保留在 {output}，请查看 build.log。", file=sys.stderr)
@@ -237,7 +324,7 @@ def main():
     args = parser.parse_args()
     try:
         release(args)
-    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+    except (ValueError, KeyError, OSError, ET.ParseError, subprocess.CalledProcessError) as error:
         # 不输出完整命令或环境，避免认证信息进入日志。
         message = f"命令 {error.cmd[0]} 失败（退出码 {error.returncode}）" if isinstance(error, subprocess.CalledProcessError) else str(error)
         print(f"发行失败：{message}", file=sys.stderr)

@@ -81,6 +81,26 @@ class ReleaseTests(unittest.TestCase):
         self.assertTrue(entitlements["com.apple.security.cs.allow-jit"])
         self.assertEqual(calls[-1][1:4], ("--verify", "--deep", "--strict"))
 
+    def test_sparkle_helpers_are_signed_before_framework_and_host(self):
+        framework = self.app / "Contents/Frameworks/Sparkle.framework"
+        helper = framework / "Versions/B/Autoupdate"
+        service = framework / "Versions/B/XPCServices/Installer.xpc"
+        for binary in (helper, service / "Contents/MacOS/Installer", framework / "Versions/B/Sparkle"):
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_bytes(bytes.fromhex("cffaedfe") + b"test")
+        work = self.root / "work"
+        work.mkdir()
+        calls = []
+        def command(*args):
+            calls.append(args)
+            return "Mach-O 64-bit executable arm64" if args[0] == "file" else ""
+        with patch.object(release, "run", side_effect=command):
+            release.sign_app(self.app, "Developer ID Application: Test", work)
+        targets = [args[-1] for args in calls if args[0] == "codesign" and "--sign" in args]
+        self.assertLess(targets.index(str(helper)), targets.index(str(framework)))
+        self.assertLess(targets.index(str(service)), targets.index(str(framework)))
+        self.assertLess(targets.index(str(framework)), targets.index(str(self.app)))
+
     def test_rejected_notarization_stops(self):
         with patch.object(release, "run", return_value='{"status":"Invalid","id":"test-id"}'):
             with self.assertRaisesRegex(ValueError, "未接受"):

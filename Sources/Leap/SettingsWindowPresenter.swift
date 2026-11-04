@@ -24,6 +24,10 @@ final class SettingsWindowPresenter {
         logger.debug("已切换到其他应用，设置恢复普通窗口层级。")
     }
 
+    func prepareForUpdate() {
+        panel?.level = .normal
+    }
+
     func present(on screen: NSScreen? = nil, source: String, content: () -> LeapSettingsRootView) {
         let target = resolveScreen(preferredDisplayID: screen?.leapDisplayID)
         let isNew = panel == nil

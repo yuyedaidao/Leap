@@ -8,6 +8,14 @@ macOS 26+ / Apple Silicon 上的快速启动器：按 `⌥⌘L` 唤起搜索框�
 
 安装包以 Release 形式发布在[本仓库 Releases](https://github.com/yuyedaidao/Leap/releases)。尚未发布正式版时可按下文自行构建。
 
+## 应用更新
+
+在“设置 → 通用”控制“启动时自动检查更新”（默认开启，下次启动生效）；驻留期间不周期检查。在“关于”页可手动检查。发现正式版后由用户确认下载、安装并重启，支持跳过或稍后安装。当前 0.0.1 没有更新模块，需要手动安装首个支持更新的版本。
+
+正式发行除现有签名、公证配置外，还需本机钥匙串中的 Sparkle 密钥，账户为 `com.padding.leap.sparkle`，公钥必须匹配 `Project.swift` 的 `SUPublicEDKey`。首次配置使用依赖中的 `Tuist/.build/artifacts/sparkle/Sparkle/bin/generate_keys --account com.padding.leap.sparkle`；已有发行用户后不能随意换钥匙。私钥不要提交或写入构建日志，请通过安全方式备份钥匙串。
+
+发布脚本对最终公证 DMG 生成带签名的 `appcast.xml`，一起上传并回读校验后才公开；公开后还会匿名检查 latest 订阅与本次产物一致。每次正式发行需递增版本和 `CFBundleVersion`；测试版不发布正式订阅。更新源为本仓库最新正式 Release 的 `appcast.xml` 附件，修改发行仓库时也需同步应用订阅地址。
+
 ## 环境要求
 
 - macOS 26 或更高版本，Apple Silicon

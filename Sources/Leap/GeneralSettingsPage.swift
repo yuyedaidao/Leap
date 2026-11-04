@@ -4,11 +4,18 @@ import SwiftUI
 struct GeneralSettingsPage: View {
     let coordinator: SettingsCoordinator
     let appearance: Binding<AppearancePreference>
+    @Bindable var updates: AppUpdateController
 
     var body: some View {
         Form {
             LaunchBehaviorSection(coordinator: coordinator, appearance: appearance)
             GlobalShortcutSection(coordinator: coordinator)
+            Section("更新") {
+                Toggle("启动时自动检查更新", isOn: $updates.automaticallyChecksOnLaunch)
+                    .accessibilityIdentifier("settings.autoUpdateToggle")
+                Text("仅在启动时检查正式版更新，更改从下次启动生效。")
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onAppear(perform: coordinator.refreshLoginItemState)

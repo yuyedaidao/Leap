@@ -17,6 +17,7 @@ let packageSettings = PackageSettings(
 let package = Package(
     name: "Leap",
     dependencies: [
-        .package(url: "https://github.com/yuyedaidao/YQLogger.git", branch: "main")
+        .package(url: "https://github.com/yuyedaidao/YQLogger.git", branch: "main"),
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.1")
     ]
 )

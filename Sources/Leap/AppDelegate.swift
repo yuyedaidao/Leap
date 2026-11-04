@@ -5,6 +5,9 @@ import YQLogger
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let logger = YQLogger(label: "com.padding.leap/app")
+    let appUpdates = AppUpdateController(
+        persistsPreferences: !ProcessInfo.processInfo.arguments.contains("-leap-testing-support-directory")
+    )
     let settingsWindowPresenter = SettingsWindowPresenter()
     private var launcherPanelController: LauncherPanelController?
     private var globalHotKey: GlobalHotKey?
@@ -62,6 +65,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         } catch {
             logger.error("无法初始化 Leap 数据目录：\(error.localizedDescription)。")
+        }
+        startAppUpdates()
+    }
+
+    private func startAppUpdates() {
+        appUpdates.willPresentUpdate = { [weak self] in
+            self?.launcherPanelController?.hideForUpdate()
+            self?.settingsWindowPresenter.prepareForUpdate()
+        }
+        // UI 测试不能访问真实更新源或替换正在运行的应用。
+        if !ProcessInfo.processInfo.arguments.contains("-leap-testing-support-directory") {
+            appUpdates.start()
         }
     }
 

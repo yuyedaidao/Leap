@@ -142,6 +142,66 @@ class PublishTests(unittest.TestCase):
                     release.require_new_tag("test/downloads", "v1.2.0")
                 command.assert_not_called()
 
+    def test_update_build_must_increase_and_bootstrap_is_allowed(self):
+        latest = {"assets": [{"name": "appcast.xml", "id": 42}]}
+        xml = f'<rss xmlns:sparkle="{release.SPARKLE_NAMESPACE}"><channel><item><sparkle:version>8</sparkle:version></item></channel></rss>'
+        with patch.object(release, "github", return_value=latest), patch.object(release, "run", return_value=xml):
+            release.check_update_build("test/repo", "9")
+            for build in ("7", "8"):
+                with self.assertRaisesRegex(ValueError, "构建号"):
+                    release.check_update_build("test/repo", build)
+        with patch.object(release, "github", return_value={"assets": []}), patch.object(release, "run") as command:
+            release.check_update_build("test/repo", "1")
+            command.assert_not_called()
+
+    def test_update_feed_validates_key_and_final_archive(self):
+        app = self.root / "Leap.app"
+        (app / "Contents").mkdir(parents=True)
+        key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        info = {"CFBundleVersion": "9", "SUPublicEDKey": key,
+                "SUFeedURL": "https://github.com/test/repo/releases/latest/download/appcast.xml"}
+        (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
+        dmg = self.root / "Leap.dmg"
+        dmg.write_bytes(b"final dmg")
+        notes = self.root / "notes.md"
+        notes.write_text("更新 <说明>", encoding="utf-8")
+        ns = release.SPARKLE_NAMESPACE
+        def command(*args):
+            if args[0].endswith("generate_keys"):
+                return key
+            archives = Path(args[-1])
+            self.assertEqual((archives / dmg.name).read_bytes(), dmg.read_bytes())
+            self.assertIn("&lt;说明&gt;", (archives / "Leap.html").read_text())
+            (self.root / "appcast.xml").write_text(
+                f'<rss xmlns:sparkle="{ns}"><channel><item><sparkle:version>9</sparkle:version>'
+                f'<enclosure url="https://github.com/test/repo/releases/download/v1/Leap.dmg" '
+                f'length="9" sparkle:edSignature="signature" /></item></channel></rss>')
+            return ""
+        with patch.object(release, "check_update_build"), patch.object(release, "run", side_effect=command):
+            self.assertEqual(release.generate_update_feed(app, dmg, notes, "test/repo", "v1", self.root).name, "appcast.xml")
+        with patch.object(release, "run", return_value="BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="):
+            with self.assertRaisesRegex(ValueError, "公钥"):
+                release.generate_update_feed(app, dmg, notes, "test/repo", "v1", self.root)
+
+    def test_public_feed_must_be_available_and_match_release(self):
+        from unittest.mock import MagicMock
+        feed = self.root / "appcast.xml"
+        feed.write_bytes(b"current signed feed")
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.read.return_value = feed.read_bytes()
+        with patch.object(release.urllib.request, "urlopen", return_value=response) as request:
+            release.verify_public_feed("test/repo", "v0.0.2", [feed])
+            self.assertNotIn("Authorization", request.call_args.args[0].headers)
+        for result in (OSError("HTTP 404"), b"old release feed"):
+            response.read.return_value = result
+            with patch.object(release.time, "sleep"), \
+                 patch.object(release.urllib.request, "urlopen", side_effect=result if isinstance(result, OSError) else None,
+                              return_value=response):
+                with self.assertRaisesRegex(ValueError, "线上订阅验收失败"):
+                    release.verify_public_feed("test/repo", "v0.0.2", [feed])
+
     def publish_fixture(self, test, failure=None):
         files = [self.root / name for name in ("Leap.dmg", "release.json", "SHA256SUMS.txt")]
         for file in files:
@@ -159,12 +219,14 @@ class PublishTests(unittest.TestCase):
                 for original in files:
                     (destination / original.name).write_bytes(b"corrupt" if failure == "checksum" else original.read_bytes())
             return ""
-        with patch.object(release, "require_new_tag"), patch.object(release, "run", side_effect=command):
+        with patch.object(release, "require_new_tag"), patch.object(release, "run", side_effect=command), \
+             patch.object(release, "verify_public_feed") as verify:
             if failure:
                 with self.assertRaises((ValueError, subprocess.CalledProcessError)):
                     release.publish("test/downloads", "v1.2.0", test, files, notes, "commit")
             else:
                 release.publish("test/downloads", "v1.2.0", test, files, notes, "commit")
+                self.assertEqual(verify.call_count, 0 if test else 1)
         return calls
 
     def test_publish_only_after_all_assets_match(self):
@@ -189,7 +251,7 @@ class PublishTests(unittest.TestCase):
 
     def test_pipeline_order_and_local_failures_never_publish(self):
         for test, failure, local in ((False, None, False), (True, None, False), (True, None, True),
-                                     (False, "build", False), (False, "package", False), (False, "source", False)):
+                                     (False, "build", False), (False, "package", False), (False, "source", False), (False, "feed", False)):
             with self.subTest(test=test, failure=failure, local=local):
                 self.args.test = test
                 self.args.local_only = local
@@ -218,7 +280,10 @@ class PublishTests(unittest.TestCase):
                      patch.object(release, "require_clean", side_effect=ValueError("锁文件有改动") if failure == "source" else None), \
                      patch.object(release, "require_new_tag"), \
                      patch.object(release, "check_repo", return_value=self.repository), \
-                     patch.object(release, "run", side_effect=command), patch.object(release, "publish") as publish:
+                     patch.object(release, "run", side_effect=command), \
+                     patch.object(release, "generate_update_feed", return_value=self.root / "appcast.xml",
+                                  side_effect=ValueError("订阅签名失败") if failure == "feed" else None) as feed, \
+                     patch.object(release, "publish") as publish:
                     if failure:
                         with self.assertRaises((ValueError, subprocess.CalledProcessError)):
                             release.release(self.args)
@@ -230,6 +295,7 @@ class PublishTests(unittest.TestCase):
                             self.assertFalse(any(args[0] == "gh" for args in calls))
                         else:
                             self.assertEqual(publish.call_args.args[1], "v1.2.0-test.3" if test else "v1.2.0")
+                            self.assertEqual(feed.call_count, 0 if test else 1)
                         package = next(args for args in calls if len(args) > 1 and args[1].endswith("package-release.py"))
                         self.assertEqual("--download-url" in package, not local)
                         self.assertEqual("--test" in package, test)

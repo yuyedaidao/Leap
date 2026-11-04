@@ -16,7 +16,7 @@ struct LeapSettingsRootView: View {
     var body: some View {
         Group {
             if let coordinator = appDelegate.settingsCoordinator {
-                LeapSettingsView(coordinator: coordinator, appearance: appearance)
+                LeapSettingsView(coordinator: coordinator, appearance: appearance, updates: appDelegate.appUpdates)
             } else {
                 ContentUnavailableView("设置暂不可用", systemImage: "exclamationmark.triangle")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -40,6 +40,7 @@ struct LeapSettingsRootView: View {
 private struct LeapSettingsView: View {
     let coordinator: SettingsCoordinator
     let appearance: Binding<AppearancePreference>
+    let updates: AppUpdateController
     @State private var selectedSection: SettingsSection? = .general
     @State private var selectedPluginID: String?
     private static let logger = YQLogger(label: "com.padding.leap/settings-navigation")
@@ -63,7 +64,7 @@ private struct LeapSettingsView: View {
             Group {
                 switch selectedSection ?? .general {
                 case .general:
-                    GeneralSettingsPage(coordinator: coordinator, appearance: appearance)
+                    GeneralSettingsPage(coordinator: coordinator, appearance: appearance, updates: updates)
                 case .plugins:
                     PluginSettingsPage(
                         installation: coordinator.pluginInstallation,
@@ -72,7 +73,7 @@ private struct LeapSettingsView: View {
                 case .data:
                     DataSettingsPage(coordinator: coordinator)
                 case .about:
-                    AboutSettingsPage()
+                    AboutSettingsPage(updates: updates)
                 }
             }
             .navigationTitle(detailTitle)

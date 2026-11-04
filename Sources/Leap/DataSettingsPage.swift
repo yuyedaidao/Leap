@@ -68,6 +68,7 @@ private struct PrivacySection: View {
 }
 
 struct AboutSettingsPage: View {
+    let updates: AppUpdateController
     private var versionDescription: String {
         guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
               let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
@@ -94,7 +95,13 @@ struct AboutSettingsPage: View {
                     .font(.largeTitle.bold())
                 Text(versionDescription)
                     .foregroundStyle(.secondary)
-                Text("本版不提供远程检查、下载或自动安装更新。")
+                Button("检查更新…", action: updates.checkForUpdates)
+                    .disabled(!updates.canCheckForUpdates)
+                    .accessibilityIdentifier("settings.checkForUpdatesButton")
+                if let error = updates.errorMessage {
+                    Text(error).foregroundStyle(.red)
+                }
+                Text("从 GitHub 正式发行版下载更新，确认后安装并重启。")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Spacer()

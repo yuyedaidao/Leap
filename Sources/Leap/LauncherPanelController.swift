@@ -49,6 +49,10 @@ final class LauncherPanelController {
         }
     }
 
+    func hideForUpdate() {
+        panel?.orderOut(nil)
+    }
+
     func closePluginSessions() {
         model.exitInteraction()
         model.closeActionSession()
