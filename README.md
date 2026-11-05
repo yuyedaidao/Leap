@@ -95,6 +95,12 @@ python3 Scripts/package-release.py
 - [插件开发](Docs/PluginDevelopment.md)
 - [隐私说明](Docs/Privacy.md)
 
+### 用 AI 开发 Leap 插件
+
+下载 [Leap 插件开发 Skill](.agents/skills/leap-plugin-development/SKILL.md) 的原始文件，保存为 `~/.codex/skills/leap-plugin-development/SKILL.md`。已有 Leap 源码时，也可以直接复制整个 `.agents/skills/leap-plugin-development` 目录到 `~/.codex/skills/`。其他支持 Skills 的工具可将同一目录放到各自的 Skill 安装位置。
+
+在插件项目中调用，例如「用 `$leap-plugin-development` 写一个实时统计字数的 Leap 原生列表插件」。
+
 ## License
 
 [MIT](LICENSE)
