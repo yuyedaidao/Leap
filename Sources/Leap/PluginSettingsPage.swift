@@ -18,6 +18,8 @@ struct PluginSettingsPage: View {
             PluginSettingsBrowser(
                 plugins: installation.plugins,
                 selectedPluginID: $selectedPluginID,
+                isEnabled: installation.isEnabled,
+                setEnabled: { plugin, enabled in installation.setEnabled(enabled, for: plugin) },
                 requestInstall: { isInstallChoicePresented = true },
                 requestUpdate: { isImporterPresented = true },
                 requestUninstall: {
@@ -124,6 +126,8 @@ struct PluginSettingsPage: View {
 private struct PluginSettingsBrowser: View {
     let plugins: [InstalledPluginDescriptor]
     @Binding var selectedPluginID: String?
+    let isEnabled: (InstalledPluginDescriptor) -> Bool
+    let setEnabled: (InstalledPluginDescriptor, Bool) -> Void
     let requestInstall: () -> Void
     let requestUpdate: () -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
@@ -136,6 +140,8 @@ private struct PluginSettingsBrowser: View {
         if let plugin = plugins.first(where: { $0.id == selectedPluginID }) {
             PluginDetailsView(
                 plugin: plugin,
+                isEnabled: isEnabled(plugin),
+                setEnabled: { setEnabled(plugin, $0) },
                 requestUpdate: requestUpdate,
                 requestUninstall: { requestUninstall(plugin) }
             )
@@ -145,6 +151,8 @@ private struct PluginSettingsBrowser: View {
                 PluginList(
                     plugins: plugins,
                     query: query,
+                    isEnabled: isEnabled,
+                    setEnabled: setEnabled,
                     requestDetails: {
                         selectedPluginID = $0
                         Self.logger.debug("已打开插件详情：\($0)。")
@@ -199,6 +207,8 @@ private struct PluginSourcePicker: View {
 private struct PluginList: View {
     let plugins: [InstalledPluginDescriptor]
     let query: PluginLibraryQuery
+    let isEnabled: (InstalledPluginDescriptor) -> Bool
+    let setEnabled: (InstalledPluginDescriptor, Bool) -> Void
     let requestDetails: (String) -> Void
     let requestUpdate: () -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
@@ -251,6 +261,8 @@ private struct PluginList: View {
         PluginRow(
             plugin: plugin,
             matchingCommands: query.matchingCommands(in: plugin).map(\.title),
+            isEnabled: isEnabled(plugin),
+            setEnabled: { setEnabled(plugin, $0) },
             requestDetails: { requestDetails(plugin.id) },
             requestUpdate: requestUpdate,
             requestUninstall: requestUninstall
@@ -261,6 +273,8 @@ private struct PluginList: View {
 private struct PluginRow: View {
     let plugin: InstalledPluginDescriptor
     let matchingCommands: [String]
+    let isEnabled: Bool
+    let setEnabled: (Bool) -> Void
     let requestDetails: () -> Void
     let requestUpdate: () -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
@@ -274,7 +288,8 @@ private struct PluginRow: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(plugin.manifest.name)
                         Text(
-                            "\(plugin.manifest.version) · \(plugin.manifest.commands.count) 个命令"
+                            "\(plugin.manifest.version) · \(plugin.manifest.commands.count) 个命令" +
+                                (isEnabled ? "" : " · 已禁用")
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -289,8 +304,6 @@ private struct PluginRow: View {
                     }
                     .lineLimit(1)
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
             }
@@ -301,6 +314,13 @@ private struct PluginRow: View {
                     : "查看 \(plugin.manifest.name) 详情，匹配命令：\(matchingCommands.joined(separator: "、"))"
             )
             .accessibilityIdentifier("settings.pluginDetails.\(plugin.id)")
+            Toggle("启用", isOn: Binding(get: { isEnabled }, set: setEnabled))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help(isEnabled ? "禁用 \(plugin.manifest.name)" : "启用 \(plugin.manifest.name)")
+                .accessibilityLabel("启用 \(plugin.manifest.name)")
+                .accessibilityIdentifier("settings.pluginEnabled.\(plugin.id)")
             if plugin.origin == .local {
                 Menu {
                     Button("从本地目录更新…", action: requestUpdate)
@@ -317,6 +337,9 @@ private struct PluginRow: View {
                 .accessibilityLabel("管理 \(plugin.manifest.name)")
                 .accessibilityIdentifier("settings.pluginMenu.\(plugin.id)")
             }
+            Image(systemName: "chevron.right")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
         }
     }
 }

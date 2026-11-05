@@ -3,13 +3,21 @@ import SwiftUI
 
 struct PluginDetailsView: View {
     let plugin: InstalledPluginDescriptor
+    let isEnabled: Bool
+    let setEnabled: (Bool) -> Void
     let requestUpdate: () -> Void
     let requestUninstall: () -> Void
 
     var body: some View {
         List {
             Section {
-                PluginDetailsHeader(plugin: plugin, requestUpdate: requestUpdate, requestUninstall: requestUninstall)
+                PluginDetailsHeader(
+                    plugin: plugin,
+                    isEnabled: isEnabled,
+                    setEnabled: setEnabled,
+                    requestUpdate: requestUpdate,
+                    requestUninstall: requestUninstall
+                )
             } header: {
                 Text("插件信息")
             } footer: {
@@ -29,6 +37,8 @@ struct PluginDetailsView: View {
 
 private struct PluginDetailsHeader: View {
     let plugin: InstalledPluginDescriptor
+    let isEnabled: Bool
+    let setEnabled: (Bool) -> Void
     let requestUpdate: () -> Void
     let requestUninstall: () -> Void
 
@@ -41,6 +51,11 @@ private struct PluginDetailsHeader: View {
                 .accessibilityIdentifier("settings.pluginDetails.version")
                 .textSelection(.enabled)
             Spacer()
+            Toggle("启用", isOn: Binding(get: { isEnabled }, set: setEnabled))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help(isEnabled ? "禁用后启动器不再显示该插件的命令" : "启用该插件的命令")
+                .accessibilityIdentifier("settings.pluginDetails.enabled")
             PluginManagementActions(
                 origin: plugin.origin, requestUpdate: requestUpdate, requestUninstall: requestUninstall
             )

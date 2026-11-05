@@ -10,6 +10,7 @@ final class PluginInstallationModel {
 
     private let installer: PluginInstaller
     private let catalog: InstalledPluginCatalog
+    private let enabledStore: PluginEnabledStore
     private let didInstall: () -> Void
     private let downloader: RemotePluginDownloader
     private var securityScopedDirectory: URL?
@@ -20,6 +21,7 @@ final class PluginInstallationModel {
     private(set) var candidate: PluginInstallCandidate?
     private(set) var errorMessage: String?
     private(set) var plugins: [InstalledPluginDescriptor] = []
+    private(set) var disabledPluginIDs: Set<String> = []
     private(set) var progress: RemotePluginProgress?
     private(set) var remotePhase: String?
     private(set) var isPreparing = false
@@ -27,12 +29,29 @@ final class PluginInstallationModel {
     var isConfirmationPresented = false
     var isRemotePresented = false
 
-    init(paths: AppPaths, downloader: RemotePluginDownloader = .init(), didInstall: @escaping () -> Void) {
+    init(
+        paths: AppPaths,
+        enabledStore: PluginEnabledStore = PluginEnabledStore(),
+        downloader: RemotePluginDownloader = .init(),
+        didInstall: @escaping () -> Void
+    ) {
         installer = PluginInstaller(paths: paths)
-        catalog = InstalledPluginCatalog(paths: paths)
+        catalog = InstalledPluginCatalog(paths: paths, enabledStore: enabledStore)
+        self.enabledStore = enabledStore
         self.downloader = downloader
         self.didInstall = didInstall
         reloadPlugins()
+    }
+
+    func isEnabled(_ plugin: InstalledPluginDescriptor) -> Bool {
+        !disabledPluginIDs.contains(plugin.id)
+    }
+
+    /// 禁用只影响启动器索引，插件文件与信任记录保持不变。
+    func setEnabled(_ enabled: Bool, for plugin: InstalledPluginDescriptor) {
+        enabledStore.setEnabled(enabled, pluginID: plugin.id)
+        disabledPluginIDs = enabledStore.disabledPluginIDs
+        didInstall()
     }
 
     func inspect(directory: URL, isSecurityScoped: Bool) {
@@ -196,6 +215,8 @@ final class PluginInstallationModel {
     func uninstall(_ plugin: InstalledPluginDescriptor) {
         do {
             try installer.uninstall(pluginID: plugin.id)
+            // 卸载后清掉禁用记录，避免重装同一插件时莫名仍处于禁用状态。
+            enabledStore.setEnabled(true, pluginID: plugin.id)
             reloadPlugins()
             didInstall()
             errorMessage = nil
@@ -207,6 +228,7 @@ final class PluginInstallationModel {
 
     func reloadPlugins() {
         plugins = catalog.loadPlugins()
+        disabledPluginIDs = enabledStore.disabledPluginIDs
     }
 
     private func install(_ candidate: PluginInstallCandidate, confirmed: Bool) throws {

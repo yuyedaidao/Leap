@@ -1,0 +1,9 @@
+{
+  "disabledSkills": [
+    "plannotator",
+    "plannotator-annotate",
+    "plannotator-inbox",
+    "plannotator-last",
+    "plannotator-review"
+  ]
+}

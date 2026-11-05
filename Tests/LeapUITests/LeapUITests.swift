@@ -191,6 +191,69 @@ final class LeapUITests: XCTestCase {
     }
 
     @MainActor
+    func testDisablingPluginHidesItFromLauncher() throws {
+        let supportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LeapUITests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+
+        let sourceDirectory = supportDirectory.appendingPathComponent("TogglePlugin", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        let pluginID = "com.padding.leap.toggle-\(UUID().uuidString.lowercased())"
+        let manifest = PluginManifest(
+            id: pluginID, name: "Toggle Plugin", version: "1.0.0", runtime: .javascript,
+            entry: "main.js", commands: [.init(id: "toggle.run", title: "Toggle Run")]
+        )
+        try JSONEncoder().encode(manifest).write(to: sourceDirectory.appendingPathComponent("manifest.json"))
+        try Data("leap.onInvoke(({ commandID }) => commandID);".utf8)
+            .write(to: sourceDirectory.appendingPathComponent("main.js"))
+        let paths = AppPaths(applicationSupportDirectory: supportDirectory, resourceDirectory: supportDirectory)
+        let installer = PluginInstaller(paths: paths)
+        try installer.install(try installer.inspect(sourceDirectory: sourceDirectory), confirmed: true)
+
+        let app = XCUIApplication()
+        app.launchArguments += ["-leap-testing-support-directory", supportDirectory.path]
+        app.launch()
+
+        let searchField = app.textFields["launcher.searchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        searchField.click()
+        searchField.typeText("toggle")
+        let command = app.buttons["launcher.command.\(pluginID)/toggle.run"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+
+        // 搜索结果展开时启动器不显示设置按钮，先清空关键字再点设置。
+        searchField.typeKey("a", modifierFlags: .command)
+        searchField.typeKey("\u{7F}", modifierFlags: [])
+        let settingsButton = app.buttons["launcher.settingsButton"]
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5))
+        settingsButton.click()
+        app.activate()
+        let pluginTab = app.descendants(matching: .any)["settings.section.plugins"].firstMatch
+        XCTAssertTrue(pluginTab.waitForExistence(timeout: 5))
+        pluginTab.click()
+        let toggle = app.descendants(matching: .any)["settings.pluginEnabled.\(pluginID)"].firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.click()
+
+        let settingsWindow = app.descendants(matching: .any)["settings.window"].firstMatch
+        settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
+        app.typeKey("l", modifierFlags: [.option, .command])
+        XCTAssertTrue(app.dialogs["com.padding.leap.launcher"].waitForExistence(timeout: 5))
+        searchField.click()
+        searchField.typeKey("a", modifierFlags: .command)
+        searchField.typeKey("\u{7F}", modifierFlags: [])
+        searchField.typeText("toggle")
+        XCTAssertFalse(command.waitForExistence(timeout: 2), "禁用后启动器不应再列出该插件的命令。")
+
+        // 重新启用，避免测试插件在用户默认值里保持禁用。
+        app.typeKey(",", modifierFlags: .command)
+        XCTAssertTrue(pluginTab.waitForExistence(timeout: 5))
+        pluginTab.click()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.click()
+    }
+
+    @MainActor
     func testSettingsReopensAndPreservesSize() throws {
         let support = FileManager.default.temporaryDirectory.appendingPathComponent("LeapSettingsUI-\(UUID())")
         let app = XCUIApplication()

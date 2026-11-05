@@ -54,9 +54,11 @@ public struct InstalledPluginCatalog {
     private static let logger = YQLogger(label: "com.padding.leap/plugin-catalog")
 
     public let paths: AppPaths
+    private let enabledStore: PluginEnabledStore
 
-    public init(paths: AppPaths) {
+    public init(paths: AppPaths, enabledStore: PluginEnabledStore = PluginEnabledStore()) {
         self.paths = paths
+        self.enabledStore = enabledStore
     }
 
     /// 官方插件来自随包目录；本地插件仅返回与信任记录匹配的受管副本。
@@ -129,9 +131,10 @@ public struct InstalledPluginCatalog {
         }
     }
 
-    /// 启动器保留按命令搜索和排序的既有行为。
+    /// 启动器保留按命令搜索和排序的既有行为；禁用插件在此处整体剔除，设置页仍可见。
     public func load(fileManager: FileManager = .default) -> [PluginCommandDescriptor] {
         loadPlugins(fileManager: fileManager)
+            .filter { enabledStore.isEnabled(pluginID: $0.id) }
             .flatMap { plugin in
                 plugin.manifest.commands.map {
                     PluginCommandDescriptor(

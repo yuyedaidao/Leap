@@ -39,3 +39,9 @@ xcodebuild build -workspace Leap.xcworkspace -scheme Leap-Workspace -destination
 
 - 为非显而易见的意图、约束、系统行为和取舍添加简洁中文注释。
 - 不重复代码本身已经清楚表达的内容；注释应解释“为什么”，而非逐字描述“做什么”。
+
+## Plannotator 计划审核
+
+通过 Plannotator 执行计划时，先询问用户是否启用独立审核。
+启用后必须调用 deepseek-reviewer 并等待结果。
+用户明确选择不启用时，本次计划不要求独立审核。
