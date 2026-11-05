@@ -95,7 +95,7 @@ struct AboutSettingsPage: View {
                     .font(.largeTitle.bold())
                 Text(versionDescription)
                     .foregroundStyle(.secondary)
-                Button("检查更新…", action: updates.checkForUpdates)
+                Button("检查更新", action: updates.checkForUpdates)
                     .disabled(!updates.canCheckForUpdates)
                     .accessibilityIdentifier("settings.checkForUpdatesButton")
                 if let error = updates.errorMessage {
