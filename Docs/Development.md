@@ -86,6 +86,6 @@ python3 Scripts/package-release.py
 
 ## 插件开发资料
 
-[插件开发指南](PluginDevelopment.md)提供清单、API 和示例。[README](../README.md#用-ai-创建第一个插件)提供 Skill 的快速安装命令。
+[插件开发指南](PluginDevelopment.md)提供清单、API 和示例。Skill 可用 `npx skills add https://github.com/yuyedaidao/Leap/tree/main/skills/leap-plugin-development` 安装。
 
 默认安装到当前项目，加 `--global` 可在同一工具的其他项目中使用。也可以让 AI 在当前项目中执行这条命令，并指定安装目标，例如追加 `--agent claude-code -y`。如果没有 `npx`，可将 [Skill 目录](../skills/leap-plugin-development/) 复制到所用工具的 Skills 目录。
