@@ -6,7 +6,13 @@ macOS 26+ / Apple Silicon 上的快速启动器：按 `⌥⌘L` 唤起搜索框�
 
 ## 下载
 
-安装包以 Release 形式发布在[本仓库 Releases](https://github.com/yuyedaidao/Leap/releases)。尚未发布正式版时可按下文自行构建。
+通过 Homebrew 安装：
+
+```sh
+brew install --cask yuyedaidao/tap/leap
+```
+
+也可从 [GitHub Releases](https://github.com/yuyedaidao/Leap/releases) 下载 DMG 安装包。
 
 ## 应用更新
 
@@ -68,6 +74,8 @@ python3 Scripts/publish-release.py --local-only --test
 
 需要有效的 Developer ID Application 证书与 `LeapNotary` 公证配置、`gh` 登录，且 Git 工作区干净。脚本会构建、签名、公证，并以 Release 形式发布到本仓库。
 
+正式 Release 公开后，按 `SHA256SUMS.txt` 手动更新 [Homebrew Tap](https://github.com/yuyedaidao/homebrew-tap) 中 `Casks/leap.rb` 的 `version` 和 `sha256`。
+
 ## 只打包已有应用
 
 `Scripts/package-release.py` 不构建应用，只对现成的 Release `Leap.app` 做签名、公证并生成 DMG，所有参数都有默认值：
@@ -97,9 +105,17 @@ python3 Scripts/package-release.py
 
 ### 用 AI 开发 Leap 插件
 
-下载 [Leap 插件开发 Skill](.agents/skills/leap-plugin-development/SKILL.md) 的原始文件，保存为 `~/.codex/skills/leap-plugin-development/SKILL.md`。已有 Leap 源码时，也可以直接复制整个 `.agents/skills/leap-plugin-development` 目录到 `~/.codex/skills/`。其他支持 Skills 的工具可将同一目录放到各自的 Skill 安装位置。
+Leap 官方 Skill 发布在仓库根目录的 [`skills/`](skills/)。
 
-在插件项目中调用，例如「用 `$leap-plugin-development` 写一个实时统计字数的 Leap 原生列表插件」。
+在插件项目的根目录运行下面的命令，按提示选择 Claude Code、Cursor、Codex 或其他支持的工具。命令需要 Node.js 提供的 `npx`。 [Skills CLI 安装说明](https://github.com/vercel-labs/skills/blob/main/docs/commands.md#skills-add)
+
+```sh
+npx skills add https://github.com/yuyedaidao/Leap/tree/main/skills/leap-plugin-development
+```
+
+默认安装到当前项目，加 `--global` 可在同一工具的其他项目中使用。也可以让 AI 在当前项目中执行这条命令，并指定安装目标，例如追加 `--agent claude-code -y`。如果没有 `npx`，可将 [Skill 目录](skills/leap-plugin-development/) 复制到所用工具的 Skills 目录。
+
+安装后，可以对所用的 AI 工具说「使用 `leap-plugin-development` 写一个实时统计字数的 Leap 原生列表插件」。
 
 ## License
 
