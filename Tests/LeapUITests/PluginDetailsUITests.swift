@@ -156,9 +156,13 @@ final class PluginDetailsUITests: XCTestCase {
         XCTAssertTrue(app.buttons["settings.pluginDetails.back"].waitForExistence(timeout: 5))
         app.activate()
         app.buttons["更新"].click()
+        let local = app.sheets.buttons["从本地目录更新"]
+        XCTAssertTrue(local.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.sheets.buttons["从远程地址更新"].exists)
+        local.click()
         try choosePluginDirectory(updated, in: app)
         // SwiftUI 同时暴露不可见的确认动作，定位实际系统 sheet 中的按钮。
-        let install = app.sheets.buttons["安装 Updated Details Plugin"]
+        let install = app.sheets.buttons["更新 Updated Details Plugin"]
         XCTAssertTrue(install.waitForExistence(timeout: 5), app.debugDescription)
         install.click()
         let version = app.staticTexts["settings.pluginDetails.version"]
@@ -205,7 +209,7 @@ final class PluginDetailsUITests: XCTestCase {
     }
 
     func makeFixture(
-        name: String = "Details Plugin", extraCommandCount: Int = 0
+        name: String = "Details Plugin", extraCommandCount: Int = 0, source remote: RemotePluginSource? = nil
     ) throws -> (support: URL, id: String) {
         let support = FileManager.default.temporaryDirectory.appendingPathComponent("LeapDetailsUI-\(UUID())")
         let pluginID = "com.padding.leap.details-\(UUID().uuidString.lowercased())"
@@ -230,7 +234,7 @@ final class PluginDetailsUITests: XCTestCase {
         try writePlugin(manifest, to: source)
         let paths = AppPaths(applicationSupportDirectory: support, resourceDirectory: support)
         let installer = PluginInstaller(paths: paths)
-        try installer.install(try installer.inspect(sourceDirectory: source), confirmed: true)
+        try installer.install(try installer.inspect(sourceDirectory: source, source: remote), confirmed: true)
         return (support, pluginID)
     }
 
@@ -361,7 +365,7 @@ extension PluginDetailsUITests {
         XCTAssertLessThan(localGroup.frame.minY, officialGroup.frame.minY)
         XCTAssertFalse(app.buttons["settings.pluginMenu.\(AppPaths.templateGeneratorID)"].exists)
         app.descendants(matching: .any)["settings.pluginMenu.\(fixture.id)"].firstMatch.click()
-        XCTAssertTrue(app.menuItems["从本地目录更新…"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.menuItems["更新…"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.menuItems["卸载"].exists)
         app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
         XCTAssertFalse(app.buttons["settings.pluginDetails.back"].exists)

@@ -29,11 +29,11 @@ extension PluginDetailsUITests {
             for horizontalOffset in [menu.frame.width / 2, CGFloat(2), menu.frame.width - 2] {
                 menu.coordinate(withNormalizedOffset: .zero)
                     .withOffset(CGVector(dx: horizontalOffset, dy: menu.frame.height / 2)).click()
-                XCTAssertTrue(app.menuItems["从本地目录更新…"].waitForExistence(timeout: 3))
+                XCTAssertTrue(app.menuItems["更新…"].waitForExistence(timeout: 3))
                 XCTAssertTrue(app.menuItems["卸载"].exists)
                 XCTAssertFalse(back.exists, "管理菜单不应打开详情。")
                 app.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
-                XCTAssertTrue(app.menuItems["从本地目录更新…"].waitForNonExistence(timeout: 3))
+                XCTAssertTrue(app.menuItems["更新…"].waitForNonExistence(timeout: 3))
             }
             // 箭头属于同一个详情按钮，其所在的右侧区域也应能进入详情。
             details.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
@@ -66,9 +66,12 @@ extension PluginDetailsUITests {
         let menu = app.descendants(matching: .any)["settings.pluginMenu.\(fixture.id)"].firstMatch
         let details = app.buttons["settings.pluginDetails.\(fixture.id)"]
         menu.click()
-        app.menuItems["从本地目录更新…"].click()
+        app.menuItems["更新…"].click()
+        let local = app.sheets.buttons["从本地目录更新"]
+        XCTAssertTrue(local.waitForExistence(timeout: 5))
+        local.click()
         try choosePluginDirectory(updated, in: app)
-        let install = app.sheets.buttons["安装 Updated Row Plugin"]
+        let install = app.sheets.buttons["更新 Updated Row Plugin"]
         XCTAssertTrue(install.waitForExistence(timeout: 5))
         install.click()
         let refreshed = XCTNSPredicateExpectation(
@@ -91,5 +94,30 @@ extension PluginDetailsUITests {
         XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
         XCTAssertFalse(app.buttons["settings.pluginDetails.back"].exists)
         XCTAssertTrue(FileManager.default.fileExists(atPath: updated.appendingPathComponent("manifest.json").path))
+    }
+
+    @MainActor
+    func testPluginRowRemoteUpdatePrefillsAddressAndCanCancel() throws {
+        let address = try XCTUnwrap(URL(string: "https://github.com/owner/repo/tree/main/plugins/test"))
+        let fixture = try makeFixture(source: RemotePluginSource(
+            directoryURL: address, owner: "owner", repository: "repo",
+            path: "plugins/test", commit: String(repeating: "a", count: 40)
+        ))
+        let app = launch(support: fixture.support)
+        app.descendants(matching: .any)["settings.pluginMenu.\(fixture.id)"].firstMatch.click()
+        app.menuItems["更新…"].click()
+        let remote = app.sheets.buttons["从远程地址更新"]
+        XCTAssertTrue(remote.waitForExistence(timeout: 5))
+        remote.click()
+        let field = app.textFields["settings.remotePluginAddress"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, address.absoluteString)
+        XCTAssertTrue(field.isEnabled)
+        XCTAssertTrue(app.buttons["settings.remotePluginDownload"].isEnabled)
+        XCTAssertFalse(app.staticTexts["settings.remotePluginPhase"].exists)
+        app.buttons["settings.remotePluginCancel"].click()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["settings.pluginDetails.\(fixture.id)"].exists)
+        XCTAssertFalse(app.buttons["settings.pluginDetails.back"].exists)
     }
 }

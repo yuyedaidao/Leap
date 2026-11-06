@@ -295,7 +295,7 @@ extension SettingsWindowUITests {
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         settings.descendants(matching: .any)["settings.section.plugins"].firstMatch.click()
         app.toolbars.buttons["settings.installPluginButton"].click()
-        let remote = app.buttons["从远程地址安装"]
+        let remote = app.sheets.buttons["settings.installRemotePlugin"]
         XCTAssertTrue(remote.waitForExistence(timeout: 5))
         remote.click()
         let field = app.textFields["settings.remotePluginAddress"]

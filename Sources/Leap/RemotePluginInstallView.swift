@@ -3,11 +3,16 @@ import SwiftUI
 
 struct RemotePluginInstallView: View {
     let installation: PluginInstallationModel
-    @State private var address = ""
+    @State private var address: String
+
+    init(installation: PluginInstallationModel) {
+        self.installation = installation
+        _address = State(initialValue: installation.remoteInitialAddress)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("从远程地址安装")
+            Text(installation.isUpdating ? "从远程地址更新" : "从远程地址安装")
                 .font(.title2.bold())
             Text("粘贴公开 GitHub 仓库中的插件目录链接，仅下载所选插件。")
                 .foregroundStyle(.secondary)
@@ -50,7 +55,10 @@ struct RemotePluginInstallView: View {
                 .disabled(installation.isInstalling)
                 .accessibilityIdentifier("settings.remotePluginCancel")
                 if let candidate = installation.candidate {
-                    Button("安装 \(candidate.manifest.name)") { installation.confirmInstallation() }
+                    let name = candidate.manifest.name
+                    Button(installation.isUpdating ? "更新 \(name)" : "安装 \(name)") {
+                        installation.confirmInstallation()
+                    }
                         .keyboardShortcut(.defaultAction)
                         .disabled(installation.isInstalling)
                         .accessibilityIdentifier("settings.remotePluginConfirm")

@@ -6,6 +6,15 @@ import YQLogger
 @MainActor
 @Observable
 final class PluginInstallationModel {
+    private struct UpdateTargetMismatch: LocalizedError {
+        let expectedID: String
+        let actualID: String
+
+        var errorDescription: String? {
+            "所选插件的 ID（\(actualID)）与要更新的插件（\(expectedID)）不一致。请选择该插件的目录。"
+        }
+    }
+
     private static let logger = YQLogger(label: "com.padding.leap/plugin-installation-ui")
 
     private let installer: PluginInstaller
@@ -17,6 +26,7 @@ final class PluginInstallationModel {
     private var downloadTask: Task<Void, Never>?
     private var downloadID: UUID?
     private var remoteDownload: RemotePluginDownload?
+    private var updateTargetID: String?
 
     private(set) var candidate: PluginInstallCandidate?
     private(set) var errorMessage: String?
@@ -24,10 +34,13 @@ final class PluginInstallationModel {
     private(set) var disabledPluginIDs: Set<String> = []
     private(set) var progress: RemotePluginProgress?
     private(set) var remotePhase: String?
+    private(set) var remoteInitialAddress = ""
     private(set) var isPreparing = false
     private(set) var isInstalling = false
     var isConfirmationPresented = false
     var isRemotePresented = false
+
+    var isUpdating: Bool { updateTargetID != nil }
 
     init(
         paths: AppPaths,
@@ -54,28 +67,27 @@ final class PluginInstallationModel {
         didInstall()
     }
 
-    func inspect(directory: URL, isSecurityScoped: Bool) {
-        guard !isPreparing, !isInstalling else {
+    func inspect(directory: URL, isSecurityScoped: Bool, updating pluginID: String? = nil) {
+        guard !isPreparing, !isInstalling, !isRemotePresented else {
             if isSecurityScoped { directory.stopAccessingSecurityScopedResource() }
             return
         }
+        rejectInstallation()
+        updateTargetID = pluginID
+        securityScopedDirectory = isSecurityScoped ? directory : nil
         do {
             let candidate = try installer.inspect(sourceDirectory: directory)
+            try validateUpdateTarget(for: candidate)
             self.candidate = candidate
             errorMessage = nil
-            securityScopedDirectory = isSecurityScoped ? directory : nil
-            if installer.requiresConfirmation(for: candidate) {
+            if isUpdating || installer.requiresConfirmation(for: candidate) {
                 // 文件选择器授予的访问权限必须维持到用户确认后，复制才能读取源目录。
                 isConfirmationPresented = true
             } else {
                 try install(candidate, confirmed: false)
             }
         } catch {
-            if securityScopedDirectory != nil {
-                releaseSecurityScope()
-            } else if isSecurityScoped {
-                directory.stopAccessingSecurityScopedResource()
-            }
+            rejectInstallation()
             Self.logger.error("无法检查插件目录：\(error.localizedDescription)。")
             errorMessage = error.localizedDescription
         }
@@ -86,8 +98,12 @@ final class PluginInstallationModel {
             return
         }
         if candidate.source == nil {
-            do { try install(candidate, confirmed: true) }
-            catch { installationFailed(error) }
+            do {
+                try install(candidate, confirmed: true)
+            } catch {
+                rejectInstallation()
+                installationFailed(error)
+            }
             return
         }
         isInstalling = true
@@ -117,6 +133,8 @@ final class PluginInstallationModel {
         isPreparing = false
         progress = nil
         remotePhase = nil
+        updateTargetID = nil
+        remoteInitialAddress = ""
         clearCandidate()
     }
 
@@ -128,9 +146,13 @@ final class PluginInstallationModel {
         remoteDownload = nil
     }
 
-    func presentRemoteInstallation() {
+    func presentRemoteInstallation(updating pluginID: String? = nil) {
         guard !isInstalling else { return }
         rejectInstallation()
+        updateTargetID = pluginID
+        if let pluginID, let record = try? installer.readTrustRecord(for: pluginID) {
+            remoteInitialAddress = record.source?.directoryURL.absoluteString ?? ""
+        }
         errorMessage = nil
         isRemotePresented = true
     }
@@ -160,10 +182,11 @@ final class PluginInstallationModel {
                 }.value
                 try Task.checkCancellation()
                 guard downloadID == id else { return }
+                try validateUpdateTarget(for: inspected)
                 candidate = inspected
                 remoteDownload = download
                 result = nil
-                remotePhase = "请确认安装来源"
+                remotePhase = isUpdating ? "请确认更新来源" : "请确认安装来源"
                 isPreparing = false
                 downloadTask = nil
             } catch {
@@ -174,6 +197,13 @@ final class PluginInstallationModel {
                 progress = nil
                 if !Task.isCancelled { installationFailed(error) }
             }
+        }
+    }
+
+    private func validateUpdateTarget(for candidate: PluginInstallCandidate) throws {
+        // 通用安装按候选 ID 写入，定向更新必须在候选进入确认流程前锁定同一 ID。
+        if let updateTargetID, candidate.manifest.id != updateTargetID {
+            throw UpdateTargetMismatch(expectedID: updateTargetID, actualID: candidate.manifest.id)
         }
     }
 
@@ -239,6 +269,8 @@ final class PluginInstallationModel {
 
     private func finishInstallation() {
         clearCandidate()
+        updateTargetID = nil
+        remoteInitialAddress = ""
         remotePhase = nil
         progress = nil
         errorMessage = nil

@@ -9,7 +9,8 @@ struct PluginSettingsPage: View {
     @Binding var selectedPluginID: String?
 
     @State private var isImporterPresented = false
-    @State private var isInstallChoicePresented = false
+    @State private var isSourceChoicePresented = false
+    @State private var sourceChoiceUpdateID: String?
     @State private var isUninstallConfirmationPresented = false
     @State private var pluginPendingUninstall: InstalledPluginDescriptor?
 
@@ -20,8 +21,8 @@ struct PluginSettingsPage: View {
                 selectedPluginID: $selectedPluginID,
                 isEnabled: installation.isEnabled,
                 setEnabled: { plugin, enabled in installation.setEnabled(enabled, for: plugin) },
-                requestInstall: { isInstallChoicePresented = true },
-                requestUpdate: { isImporterPresented = true },
+                requestInstall: { presentSourceChoice() },
+                requestUpdate: { presentSourceChoice(updating: $0) },
                 requestUninstall: {
                     pluginPendingUninstall = $0
                     isUninstallConfirmationPresented = true
@@ -32,19 +33,24 @@ struct PluginSettingsPage: View {
             }
         }
         .padding(24)
-        .confirmationDialog("安装插件", isPresented: $isInstallChoicePresented, titleVisibility: .visible) {
-            Button("从本地目录安装") { isImporterPresented = true }
-                .accessibilityIdentifier("settings.installLocalPlugin")
-            Button("从远程地址安装") { installation.presentRemoteInstallation() }
-                .accessibilityIdentifier("settings.installRemotePlugin")
-            Button("取消", role: .cancel) {}
-        }
+        .confirmationDialog(
+            sourceChoiceUpdateID == nil ? "安装插件" : "更新插件",
+            isPresented: $isSourceChoicePresented,
+            titleVisibility: .visible,
+            actions: sourceChoiceActions
+        )
         .sheet(isPresented: remotePresentationBinding) {
             RemotePluginInstallView(installation: installation)
         }
-        .fileImporter(isPresented: $isImporterPresented, allowedContentTypes: [.folder], onCompletion: inspectPlugin)
+        .fileImporter(
+            isPresented: $isImporterPresented,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false,
+            onCompletion: inspectPlugin,
+            onCancellation: { sourceChoiceUpdateID = nil }
+        )
         .confirmationDialog(
-            "确认安装插件？",
+            installation.isUpdating ? "确认更新插件？" : "确认安装插件？",
             isPresented: installationConfirmationBinding,
             titleVisibility: .visible,
             presenting: installation.candidate,
@@ -73,11 +79,32 @@ struct PluginSettingsPage: View {
         return $installation.isRemotePresented
     }
 
-    private func inspectPlugin(_ result: Result<URL, Error>) {
+    private func presentSourceChoice(updating pluginID: String? = nil) {
+        sourceChoiceUpdateID = pluginID
+        isSourceChoicePresented = true
+    }
+
+    @ViewBuilder
+    private func sourceChoiceActions() -> some View {
+        Button(sourceChoiceUpdateID == nil ? "从本地目录安装" : "从本地目录更新") {
+            isImporterPresented = true
+        }
+        .accessibilityIdentifier("settings.installLocalPlugin")
+        Button(sourceChoiceUpdateID == nil ? "从远程地址安装" : "从远程地址更新") {
+            installation.presentRemoteInstallation(updating: sourceChoiceUpdateID)
+            sourceChoiceUpdateID = nil
+        }
+        .accessibilityIdentifier("settings.installRemotePlugin")
+        Button("取消", role: .cancel) { sourceChoiceUpdateID = nil }
+    }
+
+    private func inspectPlugin(_ result: Result<[URL], Error>) {
+        defer { sourceChoiceUpdateID = nil }
         switch result {
-        case let .success(directory):
+        case let .success(directories):
+            guard let directory = directories.first else { return }
             let accessed = directory.startAccessingSecurityScopedResource()
-            installation.inspect(directory: directory, isSecurityScoped: accessed)
+            installation.inspect(directory: directory, isSecurityScoped: accessed, updating: sourceChoiceUpdateID)
         case let .failure(error):
             installation.inspectFailure(error)
         }
@@ -85,7 +112,7 @@ struct PluginSettingsPage: View {
 
     @ViewBuilder
     private func installConfirmationActions(_ candidate: PluginInstallCandidate) -> some View {
-        Button("安装 \(candidate.manifest.name)") {
+        Button(installation.isUpdating ? "更新 \(candidate.manifest.name)" : "安装 \(candidate.manifest.name)") {
             installation.confirmInstallation()
         }
         Button("取消", role: .cancel) {
@@ -129,7 +156,7 @@ private struct PluginSettingsBrowser: View {
     let isEnabled: (InstalledPluginDescriptor) -> Bool
     let setEnabled: (InstalledPluginDescriptor, Bool) -> Void
     let requestInstall: () -> Void
-    let requestUpdate: () -> Void
+    let requestUpdate: (String) -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
 
     @State private var query = PluginLibraryQuery()
@@ -142,7 +169,7 @@ private struct PluginSettingsBrowser: View {
                 plugin: plugin,
                 isEnabled: isEnabled(plugin),
                 setEnabled: { setEnabled(plugin, $0) },
-                requestUpdate: requestUpdate,
+                requestUpdate: { requestUpdate(plugin.id) },
                 requestUninstall: { requestUninstall(plugin) }
             )
             .id(plugin.id)
@@ -210,7 +237,7 @@ private struct PluginList: View {
     let isEnabled: (InstalledPluginDescriptor) -> Bool
     let setEnabled: (InstalledPluginDescriptor, Bool) -> Void
     let requestDetails: (String) -> Void
-    let requestUpdate: () -> Void
+    let requestUpdate: (String) -> Void
     let requestUninstall: (InstalledPluginDescriptor) -> Void
 
     var body: some View {
@@ -264,7 +291,7 @@ private struct PluginList: View {
             isEnabled: isEnabled(plugin),
             setEnabled: { setEnabled(plugin, $0) },
             requestDetails: { requestDetails(plugin.id) },
-            requestUpdate: requestUpdate,
+            requestUpdate: { requestUpdate(plugin.id) },
             requestUninstall: requestUninstall
         )
     }
@@ -323,7 +350,7 @@ private struct PluginRow: View {
                 .accessibilityIdentifier("settings.pluginEnabled.\(plugin.id)")
             if plugin.origin == .local {
                 Menu {
-                    Button("从本地目录更新…", action: requestUpdate)
+                    Button("更新", action: requestUpdate)
                     Button("卸载", role: .destructive) { requestUninstall(plugin) }
                 } label: {
                     Label("管理插件", systemImage: "ellipsis")
@@ -341,28 +368,6 @@ private struct PluginRow: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
         }
-    }
-}
-
-struct PluginManagementActions: View {
-    let origin: InstalledPluginDescriptor.Origin
-    let requestUpdate: () -> Void
-    let requestUninstall: () -> Void
-
-    var body: some View {
-        HStack {
-            if origin == .official {
-                Text("内置")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .help("随 Leap 更新，无需单独安装。")
-            } else {
-                Button("更新", action: requestUpdate)
-                Button("卸载", role: .destructive, action: requestUninstall)
-            }
-        }
-        // List 内的管理按钮独立响应，不让安装或卸载操作同时打开详情。
-        .buttonStyle(.borderless)
     }
 }
 

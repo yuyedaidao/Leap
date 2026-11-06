@@ -68,6 +68,28 @@ private struct PluginDetailsHeader: View {
     }
 }
 
+private struct PluginManagementActions: View {
+    let origin: InstalledPluginDescriptor.Origin
+    let requestUpdate: () -> Void
+    let requestUninstall: () -> Void
+
+    var body: some View {
+        HStack {
+            if origin == .official {
+                Text("内置")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("随 Leap 更新，无需单独安装。")
+            } else {
+                Button("更新", action: requestUpdate)
+                Button("卸载", role: .destructive, action: requestUninstall)
+            }
+        }
+        // List 内的管理按钮独立响应。
+        .buttonStyle(.borderless)
+    }
+}
+
 private struct PluginCommandDetails: View {
     let command: PluginManifest.Command
     let manifest: PluginManifest

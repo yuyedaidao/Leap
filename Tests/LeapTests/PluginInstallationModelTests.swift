@@ -19,9 +19,27 @@ struct PluginInstallationModelTests {
         let temporary = fixture.root.appendingPathComponent("Downloads")
         let downloader = RemotePluginDownloader(client: mock, temporaryDirectory: temporary)
         return (
-            PluginInstallationModel(paths: fixture.installer.paths, downloader: downloader, didInstall: didInstall),
+            PluginInstallationModel(
+                paths: fixture.installer.paths, enabledStore: PluginEnabledStore(key: fixture.root.lastPathComponent),
+                downloader: downloader, didInstall: didInstall
+            ),
             mock, temporary
         )
+    }
+
+    @Test("即使本地来源内容相同，定向更新也要求确认")
+    func unchangedLocalUpdateRequiresConfirmation() throws {
+        let fixture = try RemotePluginInstallationTests.Fixture()
+        defer { fixture.remove() }
+        let original = try fixture.installer.inspect(sourceDirectory: fixture.source)
+        try fixture.installer.install(original, confirmed: true)
+        let (model, _, _) = try makeModel(fixture: fixture)
+
+        model.inspect(directory: fixture.source, isSecurityScoped: false, updating: original.manifest.id)
+        #expect(model.isConfirmationPresented)
+        model.rejectInstallation()
+        #expect(!model.isUpdating)
+        #expect(model.candidate == nil)
     }
 
     private func waitUntil(_ predicate: () -> Bool) async throws {
@@ -30,7 +48,7 @@ struct PluginInstallationModelTests {
         #expect(predicate())
     }
 
-    @Test("远程准备、确认与刷新，重复提交和重复确认不产生额外安装")
+    @Test("定向远程更新刷新插件并保留禁用状态，重复提交和确认只安装一次")
     func installAndRefresh() async throws {
         let fixture = try RemotePluginInstallationTests.Fixture()
         defer { fixture.remove() }
@@ -38,7 +56,13 @@ struct PluginInstallationModelTests {
         try fixture.installer.install(fixture.installer.inspect(sourceDirectory: fixture.source), confirmed: true)
         var refreshes = 0
         let (model, mock, temporary) = try makeModel(fixture: fixture) { refreshes += 1 }
-        model.presentRemoteInstallation()
+        let previous = try #require(model.plugins.first { $0.id == "test.remote" })
+        model.setEnabled(false, for: previous)
+        defer { model.setEnabled(true, for: previous) }
+        refreshes = 0
+        try Data("updated".utf8).write(to: fixture.source.appendingPathComponent("main.js"))
+        model.presentRemoteInstallation(updating: previous.id)
+        #expect(model.remoteInitialAddress.isEmpty)
         model.downloadRemote(address: address)
         model.downloadRemote(address: address)
         try await waitUntil { model.candidate != nil }
@@ -53,11 +77,61 @@ struct PluginInstallationModelTests {
         #expect(refreshes == 1)
         #expect(!model.isRemotePresented)
         #expect(model.candidate == nil)
-        #expect(model.plugins.contains { $0.id == "test.remote" })
+        #expect(!model.isUpdating)
+        let updated = try #require(model.plugins.first { $0.id == previous.id })
+        #expect(!model.isEnabled(updated))
         #expect(
             try fixture.installer.readTrustRecord(for: "test.remote")?.source?.commit
                 == RemotePluginDownloaderTests.commit)
         #expect(try FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty)
+        model.presentRemoteInstallation(updating: updated.id)
+        #expect(model.remoteInitialAddress == address)
+        #expect(!model.isPreparing)
+        model.rejectInstallation()
+    }
+
+    @Test("本地和远程更新拒绝其他插件，取消后可用普通安装")
+    func mismatchedUpdateTarget() async throws {
+        let fixture = try RemotePluginInstallationTests.Fixture()
+        defer { fixture.remove() }
+        let original = try fixture.installer.inspect(sourceDirectory: fixture.source)
+        let installed = try fixture.installer.install(original, confirmed: true)
+        let originalRecord = try fixture.installer.readTrustRecord(for: original.manifest.id)
+        let other = PluginManifest(
+            id: "test.other", name: "其他插件", version: "1.0.0", runtime: .javascript,
+            entry: "main.js", commands: [.init(id: "run", title: "运行")]
+        )
+        try JSONEncoder().encode(other).write(to: fixture.source.appendingPathComponent("manifest.json"))
+        let (model, _, temporary) = try makeModel(fixture: fixture)
+
+        model.inspect(directory: fixture.source, isSecurityScoped: false, updating: original.manifest.id)
+        #expect(model.candidate == nil)
+        #expect(model.errorMessage?.contains("不一致") == true)
+        #expect(!model.isConfirmationPresented)
+        #expect(!model.isUpdating)
+
+        model.presentRemoteInstallation(updating: original.manifest.id)
+        model.downloadRemote(address: address)
+        try await waitUntil { !model.isPreparing }
+        #expect(model.candidate == nil)
+        #expect(model.errorMessage?.contains("不一致") == true)
+        #expect(model.isUpdating)
+        #expect(model.isRemotePresented)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty)
+        #expect(try fixture.installer.readTrustRecord(for: original.manifest.id) == originalRecord)
+        #expect(try fixture.installer.inspect(sourceDirectory: installed).manifest == original.manifest)
+        #expect(try fixture.installer.readTrustRecord(for: other.id) == nil)
+
+        model.rejectInstallation()
+        model.presentRemoteInstallation()
+        #expect(!model.isUpdating)
+        #expect(model.remoteInitialAddress.isEmpty)
+        model.downloadRemote(address: address)
+        try await waitUntil { model.candidate != nil }
+        #expect(model.candidate?.manifest.id == other.id)
+        model.confirmInstallation()
+        try await waitUntil { !model.isInstalling }
+        #expect(try fixture.installer.readTrustRecord(for: other.id)?.source != nil)
     }
 
     @Test("拒绝准备完成的候选清理下载，保留旧插件和信任")
@@ -97,12 +171,15 @@ struct PluginInstallationModelTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty)
     }
 
-    @Test("错误后可重试，失效清单和安装失败不增加信任")
+    @Test("远程更新失败后可重试，保留旧副本和信任")
     func failureAndRetry() async throws {
         let fixture = try RemotePluginInstallationTests.Fixture()
         defer { fixture.remove() }
+        let original = try fixture.installer.inspect(sourceDirectory: fixture.source, source: fixture.remote)
+        let installed = try fixture.installer.install(original, confirmed: true)
+        let originalRecord = try fixture.installer.readTrustRecord(for: original.manifest.id)
         let (model, _, _) = try makeModel(fixture: fixture)
-        model.presentRemoteInstallation()
+        model.presentRemoteInstallation(updating: original.manifest.id)
         model.downloadRemote(address: "https://github.com/o/r")
         try await waitUntil { !model.isPreparing }
         #expect(model.errorMessage != nil)
@@ -117,7 +194,9 @@ struct PluginInstallationModelTests {
         #expect(model.errorMessage?.contains("发生变化") == true)
         #expect(model.remotePhase == nil)
         #expect(model.candidate == nil)
-        #expect(try fixture.installer.readTrustRecord(for: "test.remote") == nil)
+        #expect(try fixture.installer.readTrustRecord(for: original.manifest.id) == originalRecord)
+        #expect(try fixture.installer.contentDigest(of: installed) == original.contentDigest)
+        #expect(model.isUpdating)
         model.downloadRemote(address: address)
         try await waitUntil { model.candidate != nil }
         #expect(model.errorMessage == nil)
