@@ -164,7 +164,7 @@ private struct LauncherSearchHeader: View {
                         Spacer()
                     }
                 } else {
-                    TextField("搜索功能 / 粘贴文件、图片", text: $query)
+                    TextField("下一步，你来定", text: $query)
                         .accessibilityIdentifier("launcher.searchField")
                         .textFieldStyle(.plain)
                         .autocorrectionDisabled()
