@@ -31,6 +31,7 @@ description: 创建、修改或排查 macOS 启动器 Leap 的插件。适用于
 - 脚本入口由宿主注入 `leap`。JavaScript 入口采用 CommonJS，`leap.d.ts` 仅用于编辑器类型检查。脚本使用 `leap.log` 或 `console` 调试，标准输出留给宿主协议。Shell 使用系统 zsh 和 `LEAP_COMMAND_ID`，只提供命令执行。
 - 原生列表在 `onInputChange` 回调内使用 `setList`。异步查询应返回 Promise 并传递取消信号，选择后的操作放在 `onSelect`。Python 回调接收字典，取消信号用 `is_set()` 检查。
 - 网页运行在 WKWebView，通过 `window.leap.invoke` 调用清单中声明的命令，入口脚本用 `leap.onInvoke` 处理。网页自身负责绘制并反馈调用失败。根据指南区分内嵌和独立窗口的清单写法。
+- 跨插件启动使用 `runPlugin(pluginID, commandID, query?)`；调用成功后当前插件会话结束并由目标命令接管，不返回目标数据。
 - 涉及文件、系统权限或网络时，校验业务输入并处理拒绝、取消与失败。Node.js 和 Python 入口具有本地权限，持久数据应放在受管插件目录以外。
 
 ## 验证与交付

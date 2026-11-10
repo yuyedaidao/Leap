@@ -234,7 +234,7 @@ struct PluginWebView: NSViewRepresentable {
                         // 回复已提交给 WebKit 后才关闭页面，避免调用者永远等不到确认。
                         Task { @MainActor [weak interaction] in
                             guard let interaction, interaction.isActive else { return }
-                            interaction.hostAction?(method)
+                            interaction.didReplyHostCall(method)
                         }
                     } catch { replyHandler(nil, error.localizedDescription) }
                 }

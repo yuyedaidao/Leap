@@ -30,6 +30,8 @@ public final class PluginHostAPI: NSObject, UNUserNotificationCenterDelegate {
         "hideMainWindowPasteText", "hideMainWindowPasteFile", "hideMainWindowPasteImage", "hideMainWindowTypeString"
     ]
     public var notificationCommand: ((String, String) -> Void)?
+    /// 跨插件启动：宿主只校验并登记，真正的启动在调用方收到回复后进行，避免先关闭调用方会话。
+    public var runPlugin: ((_ pluginID: String, _ commandID: String, _ query: String) -> Bool)?
     private let paths: AppPaths
     private let pasteboard: NSPasteboard
     private let defaults: UserDefaults
@@ -253,6 +255,15 @@ extension PluginHostAPI {
         case "showNotification": try await notify(params, context: context)
         case "showLoading", "hideLoading":
             throw PluginSessionError.plugin("加载动画仅支持原生列表的当前查询或选择回调。")
+        case "runPlugin":
+            let pluginID = try string(params, "pluginID")
+            let commandID = try string(params, "commandID")
+            if let query = params["query"], query.string == nil {
+                throw PluginSessionError.plugin("参数 query 必须为字符串。")
+            }
+            guard runPlugin?(pluginID, commandID, params["query"]?.string ?? "") == true else {
+                throw PluginSessionError.plugin("未找到可启动的插件命令：\(pluginID)/\(commandID)。")
+            }
         case "outPlugin", "hideMainWindow": break
         default: throw PluginSessionError.plugin("未知宿主接口。")
         }

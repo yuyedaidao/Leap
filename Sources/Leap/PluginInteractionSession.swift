@@ -23,6 +23,8 @@ final class PluginInteractionSession: Identifiable {
         startupError ?? (list == nil && inputCoordinator?.isError == true ? inputCoordinator?.message : nil)
     }
     var hostAction: ((String) -> Void)?
+    /// 跨插件启动：宿主回复送达后再切换，避免调用方等不到结果。
+    var onPluginRun: (() -> Void)?
     var inputText: String
     private(set) var committedInput: String
     private(set) var submitID = 0
@@ -54,7 +56,7 @@ final class PluginInteractionSession: Identifiable {
                 }, onHostReply: { [weak self] method in
                     Task { @MainActor in
                         guard let self, self.isActive else { return }
-                        self.hostAction?(method)
+                        self.didReplyHostCall(method)
                     }
                 }
             )
@@ -100,6 +102,11 @@ final class PluginInteractionSession: Identifiable {
         script?.close()
         exitWebPage?()
         exitWebPage = nil
+    }
+
+    func didReplyHostCall(_ method: String) {
+        guard isActive else { return }
+        if method == "runPlugin" { onPluginRun?() } else { hostAction?(method) }
     }
 
     func invoke(commandID: String, query: String) async -> LauncherModel.InvocationResponse {

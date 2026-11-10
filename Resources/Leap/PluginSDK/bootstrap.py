@@ -123,6 +123,12 @@ def keyboard(key, *modifiers):
     return host_call("simulateKeyboardTap", {"key": key, "modifiers": list(modifiers)})
 
 
+def run_plugin(plugin_id, command_id, query=""):
+    if not isinstance(plugin_id, str) or not plugin_id or not isinstance(command_id, str) or not command_id or not isinstance(query, str):
+        raise ValueError("插件 ID、命令 ID 必须为非空字符串，参数必须为字符串。")
+    return host_call("runPlugin", {"pluginID": plugin_id, "commandID": command_id, "query": query})
+
+
 def copyText(text):
     return single_host("copyText", "text", text)
 
@@ -245,6 +251,7 @@ leap.isWindows = isWindows
 leap.isLinux = isLinux
 leap.showNotification = notification
 leap.simulateKeyboardTap = keyboard
+leap.runPlugin = run_plugin
 
 
 def handle(message):

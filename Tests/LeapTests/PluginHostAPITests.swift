@@ -211,6 +211,73 @@ struct PluginHostAPITests {
         #expect(manifest.webEntry == "index.html")
     }
 
+    @Test("跨插件启动把参数交给宿主并返回成功")
+    func runPluginPassesRequest() async throws {
+        let fixture = service()
+        defer { fixture.close() }
+        var received: [String] = []
+        fixture.api.runPlugin = { pluginID, commandID, query in
+            received = [pluginID, commandID, query]
+            return true
+        }
+        let value = try await fixture.api.handle(
+            "runPlugin",
+            params: .object(["pluginID": .string("com.example.a"), "commandID": .string("b"), "query": .string("中文")]),
+            context: context()
+        )
+        #expect(value == .bool(true))
+        #expect(received == ["com.example.a", "b", "中文"])
+    }
+
+    @Test("跨插件启动缺少 query 时传递空字符串")
+    func runPluginDefaultsEmptyQuery() async throws {
+        let fixture = service()
+        defer { fixture.close() }
+        var received = "unset"
+        fixture.api.runPlugin = { _, _, query in
+            received = query
+            return true
+        }
+        _ = try await fixture.api.handle(
+            "runPlugin",
+            params: .object(["pluginID": .string("a"), "commandID": .string("b")]),
+            context: context()
+        )
+        #expect(received.isEmpty)
+    }
+
+    @Test("跨插件启动未命中或参数类型错误时拒绝")
+    func runPluginRejectsInvalidRequest() async throws {
+        let fixture = service()
+        defer { fixture.close() }
+        let params: PluginValue = .object(["pluginID": .string("a"), "commandID": .string("b")])
+        do {
+            _ = try await fixture.api.handle("runPlugin", params: params, context: context())
+            Issue.record("没有宿主回调时接受了跨插件启动")
+        } catch {
+            #expect(error.localizedDescription.contains("未找到可启动的插件命令"))
+        }
+
+        fixture.api.runPlugin = { _, _, _ in false }
+        do {
+            _ = try await fixture.api.handle("runPlugin", params: params, context: context())
+            Issue.record("目标命令不存在时接受了跨插件启动")
+        } catch {
+            #expect(error.localizedDescription.contains("未找到可启动的插件命令"))
+        }
+
+        do {
+            _ = try await fixture.api.handle(
+                "runPlugin",
+                params: .object(["pluginID": .string("a"), "commandID": .string("b"), "query": .bool(true)]),
+                context: context()
+            )
+            Issue.record("非字符串查询被接受")
+        } catch {
+            #expect(error.localizedDescription.contains("query 必须为字符串"))
+        }
+    }
+
     @Test("不可取消的系统等待不会阻塞调用者结束")
     func cancelledSystemWait() async throws {
         let underlying = Task<Void, any Error> {

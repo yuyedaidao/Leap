@@ -42,6 +42,14 @@ final class LauncherPanelController {
             self.present()
             self.model.activate(command)
         }
+        model.hostAPI?.runPlugin = { [weak model] pluginID, commandID, query in
+            model?.preparePluginRun(pluginID: pluginID, commandID: commandID, query: query) ?? false
+        }
+        model.pluginRunRequested = { [weak self] command, query in
+            guard let self else { return }
+            self.present()
+            self.model.activate(command, query: query)
+        }
         model.hideRequested = { [weak self] in self?.panel?.orderOut(nil) }
         model.applicationDidLaunch = { [weak self] in self?.hideAfterApplicationLaunch() }
         model.webPluginRequested = { [weak self] command in

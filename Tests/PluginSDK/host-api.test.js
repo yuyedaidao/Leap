@@ -16,17 +16,24 @@ test('共享包装器的参数、结构化结果、校验及图片大小边界',
   await sdk.copyImage(new Uint8Array([0, 1, 255]));
   await sdk.showNotification('测试', 'run');
   await sdk.simulateKeyboardTap('v', 'command');
+  await sdk.runPlugin('com.example.a', 'b', '中文');
   assert.deepEqual(calls.slice(1), [
     { method: 'copyFile', params: { filePath: ['/tmp/a', '/tmp/b'] } },
     { method: 'copyImage', params: { image: 'data:application/octet-stream;base64,AAH/' } },
     { method: 'showNotification', params: { body: '测试', clickFeatureCode: 'run' } },
     { method: 'simulateKeyboardTap', params: { key: 'v', modifiers: ['command'] } },
+    { method: 'runPlugin', params: { pluginID: 'com.example.a', commandID: 'b', query: '中文' } },
   ]);
   for (const action of [() => sdk.copyFile([]), () => sdk.copyFile([null]), () => sdk.copyText(null),
     () => sdk.copyImage(new Uint8Array()), () => sdk.copyImage(new Uint8Array(16 * 1024 * 1024 + 1)),
     () => sdk.simulateKeyboardTap('a', 1), () => sdk.showNotification('')]) {
     await assert.rejects(action(), TypeError);
   }
+  for (const action of [() => sdk.runPlugin('', 'b'), () => sdk.runPlugin('a', ''), () => sdk.runPlugin('a', 'b', 1)]) {
+    await assert.rejects(action(), TypeError);
+  }
+  await sdk.runPlugin('com.example.a', 'b');
+  assert.deepEqual(calls.at(-1).params, { pluginID: 'com.example.a', commandID: 'b', query: '' });
   const bytes = new Uint8Array(16 * 1024 * 1024);
   await sdk.copyImage(bytes);
   assert.ok(calls.at(-1).params.image.length < 24 * 1024 * 1024);

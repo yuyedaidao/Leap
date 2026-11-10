@@ -86,6 +86,12 @@
         if (typeof key !== 'string' || !key || modifiers.some(value => typeof value !== 'string')) return Promise.reject(new TypeError('按键和修饰键必须为字符串。'));
         return invoke('simulateKeyboardTap', { key, modifiers });
       },
+      runPlugin: (pluginID, commandID, query = '') => {
+        if (typeof pluginID !== 'string' || !pluginID || typeof commandID !== 'string' || !commandID || typeof query !== 'string') {
+          return Promise.reject(new TypeError('插件 ID、命令 ID 必须为非空字符串，参数必须为字符串。'));
+        }
+        return invoke('runPlugin', { pluginID, commandID, query });
+      },
     };
   }
   if (typeof module !== 'undefined' && module.exports) module.exports = create;

@@ -91,6 +91,7 @@ final class LauncherModel {
     private var actionSession: PluginScriptSession?
     private var actionID: UUID?
     private var invocationRevision = 0
+    private var pendingPluginRun: (command: PluginCommandDescriptor, query: String)?
     private var foregroundShellTask: ShellScriptTask?
     private var commandMatchers: [String: PluginCommandMatcher] = [:]
 
@@ -106,6 +107,8 @@ final class LauncherModel {
     var applicationDidLaunch: (() -> Void)?
     var hideRequested: (() -> Void)?
     var webPluginRequested: ((PluginCommandDescriptor) -> Void)?
+    /// 跨插件调用登记的启动请求；由面板在调用方收到回复后执行。
+    var pluginRunRequested: ((PluginCommandDescriptor, String) -> Void)?
 
     init(paths: AppPaths) {
         catalog = InstalledPluginCatalog(paths: paths)
@@ -265,14 +268,15 @@ final class LauncherModel {
         }
     }
 
-    func activate(_ command: PluginCommandDescriptor) {
+    func activate(_ command: PluginCommandDescriptor, query overrideQuery: String? = nil) {
         invocationRevision &+= 1
         closeActionSession()
         let configuration = configuration(for: command)
+        let launchQuery = overrideQuery ?? query
         if configuration.mode == .interactive {
             exitInteraction()
-            let initialInput = keywordMatchRank(command, query: query) == nil &&
-                commandMatchers[command.id]?.matchesContent(query) == true ? query : ""
+            let initialInput = overrideQuery ?? (keywordMatchRank(command, query: query) == nil &&
+                commandMatchers[command.id]?.matchesContent(query) == true ? query : "")
             interaction = PluginInteractionSession(
                 command: command, configuration: configuration,
                 previousSearch: query, initialInput: initialInput, executor: scriptExecutor,
@@ -282,6 +286,7 @@ final class LauncherModel {
                 if method == "outPlugin" { self?.exitInteraction() }
                 else if method == "hideMainWindow" || PluginHostAPI.inputMethods.contains(method) { self?.exitInteraction(); self?.hideRequested?() }
             }
+            interaction?.onPluginRun = { [weak self] in self?.activatePendingPluginRun() }
             invocationState = .idle
             recordRecent(command)
             if configuration.inputEnabled { requestSearchFocus() }
@@ -306,7 +311,7 @@ final class LauncherModel {
             guard let self else {
                 return
             }
-            let response = await self.run(command, query: self.query)
+            let response = await self.run(command, query: launchQuery)
             guard !Task.isCancelled, self.invocationRevision == revision else {
                 return
             }
@@ -321,13 +326,30 @@ final class LauncherModel {
     }
 
     func makeWebSession(_ command: PluginCommandDescriptor) -> PluginInteractionSession {
-        PluginInteractionSession(
+        let session = PluginInteractionSession(
             command: command,
             configuration: .init(id: command.commandID, title: command.title, mode: .interactive,
                                  presentation: .web, input: .init(enabled: false)),
             previousSearch: query, initialInput: "", executor: scriptExecutor,
             hostAPI: hostAPI, targetPID: externalTargetPID, inputWindowVisibility: inputWindowVisibility
         )
+        session.onPluginRun = { [weak self] in self?.activatePendingPluginRun() }
+        return session
+    }
+
+    /// 只校验并登记目标命令，真正的启动交给回复后的 `activatePendingPluginRun`，否则调用方会收不到回复。
+    func preparePluginRun(pluginID: String, commandID: String, query: String) -> Bool {
+        guard let command = commands.first(where: { $0.pluginID == pluginID && $0.commandID == commandID }) else {
+            return false
+        }
+        pendingPluginRun = (command, query)
+        return true
+    }
+
+    func activatePendingPluginRun() {
+        guard let pending = pendingPluginRun else { return }
+        pendingPluginRun = nil
+        pluginRunRequested?(pending.command, pending.query)
     }
 
     func dismissWebPlugin() {
@@ -438,7 +460,9 @@ extension LauncherModel {
                 }, onHostReply: { [weak self] method in
                     Task { @MainActor in
                         guard let self, self.actionID == id else { return }
-                        if method == "outPlugin" || method == "hideMainWindow" || PluginHostAPI.inputMethods.contains(method) {
+                        if method == "runPlugin" {
+                            self.activatePendingPluginRun()
+                        } else if method == "outPlugin" || method == "hideMainWindow" || PluginHostAPI.inputMethods.contains(method) {
                             self.closeActionSession()
                             if method == "hideMainWindow" || PluginHostAPI.inputMethods.contains(method) { self.hideRequested?() }
                         }

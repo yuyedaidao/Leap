@@ -81,6 +81,8 @@ interface LeapCommonSDK {
   isLinux(): Promise<boolean>;
   showNotification(body: string, clickFeatureCode?: string): Promise<boolean>;
   simulateKeyboardTap(key: string, ...modifiers: string[]): Promise<boolean>;
+  /** 启动已启用插件的命令并透传查询；返回是否已启动，调用后当前插件会话结束。 */
+  runPlugin(pluginID: string, commandID: string, query?: string): Promise<boolean>;
 
   outPlugin(): Promise<boolean>;
   hideMainWindow(): Promise<boolean>;

@@ -13,3 +13,5 @@ Resources/Leap/Runtimes/node-*/
 Resources/Leap/Runtimes/python-*/
 Scripts/__pycache__/
 Tests/Release/__pycache__/
+# 本地工具运行时状态
+.pi-web/
