@@ -48,6 +48,15 @@ for (const runtime of ['javascript', 'python']) test(`${runtime} 多命令按 ID
 
 });
 
+test('勾选图标时写入通用 plugin-icon.png，不用生成器自身图标', t => {
+  const input = fixture(t);
+  generate(input);
+  const generator = path.join(__dirname, '../../Resources/Leap/OfficialPlugins/TemplateGenerator');
+  const icon = fs.readFileSync(path.join(input.directory, 'icon.png'));
+  assert.ok(icon.equals(fs.readFileSync(path.join(generator, 'plugin-icon.png'))));
+  assert.ok(!icon.equals(fs.readFileSync(path.join(generator, 'default-icon.png'))));
+});
+
 test('Shell 多命令支持后台，未知 ID 非零退出', t => {
   const input = fixture(t, 'shell');
   input.commands = [{ id: 'front', interaction: 'action' }, { id: 'back', interaction: 'action', executionMode: 'background' }];

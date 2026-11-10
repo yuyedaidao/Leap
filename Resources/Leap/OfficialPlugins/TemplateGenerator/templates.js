@@ -151,7 +151,8 @@ function filesFor(data) {
       include: ['**/*.js', 'leap.d.ts'] }, null, 2) + '\n';
   }
   // 默认 PNG 是真实文件，勾选图标后生成结果仍能直接安装，无需新增文件选择桥接。
-  if (data.includeIcon) files['icon.png'] = require('node:fs').readFileSync(require('node:path').join(__dirname, 'default-icon.png'));
+  // plugin-icon.png 是生成结果专用的通用图标；default-icon.png 是生成器自己的图标，不能复用。
+  if (data.includeIcon) files['icon.png'] = require('node:fs').readFileSync(require('node:path').join(__dirname, 'plugin-icon.png'));
   return files;
 }
 
