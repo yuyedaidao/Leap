@@ -34,6 +34,8 @@ test('五种模板生成且脚本按真实运行协议返回 hello', async t => 
       });
       assert.equal(run.status, 0, run.stderr);
       assert.equal(run.stdout, 'hello\n');
+      // 单命令不给用户塞 case 分派，直接就是脚本正文。
+      assert.ok(!fs.readFileSync(path.join(result.directory, manifest.entry), 'utf8').includes('case '));
     } else {
       const plugin = session(path.join(result.directory, manifest.entry), input.commandID, runtime);
       try {

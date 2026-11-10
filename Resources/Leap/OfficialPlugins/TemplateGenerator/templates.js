@@ -4,13 +4,30 @@ function scriptFor(runtime, commands) {
   // 配置作为数据序列化，不能把用户填写的 ID 拼成可执行代码。
   const config = Object.fromEntries(commands.map(command => [command.id, command.interaction]));
   if (runtime === 'shell') {
-    const ids = commands.map(command => `'${command.id}'`).join('|');
+    // 单命令不需要分派，直接就是脚本正文；用户能在第一屏看到落笔处。
+    if (commands.length === 1) {
+      return `#!/bin/zsh
+set -eu
+
+# ↓ 在这里写你的脚本；标准输出会显示在启动器里。
+printf '%s\\n' 'hello'
+`;
+    }
+    const branches = commands.map(({ id, title }) => {
+      const heading = title ? `  # ${String(title).replace(/[\r\n]+/g, ' ')}\n` : '';
+      return `${heading}  '${id}')
+    # ↓ 在这里写这条命令的脚本
+    printf '%s\\n' 'hello'
+    ;;
+`;
+    }).join('');
     return `#!/bin/zsh
 set -eu
-# 所有命令共用入口，未知 ID 必须失败，避免误执行业务动作。
+
+# 一个 case 分支对应清单里的一条命令；改分支里的内容就是改这条命令的脚本。
+# 命令标题见 manifest.json 的 commands[].title。
 case "\${LEAP_COMMAND_ID:-}" in
-  ${ids}) printf '%s\\n' 'hello' ;;
-  *) printf '%s\\n' '未知命令。' >&2; exit 1 ;;
+${branches}  *) printf '%s\\n' '未知命令。' >&2; exit 1 ;;
 esac
 `;
   }
@@ -121,7 +138,7 @@ function filesFor(data) {
       `在 Leap 设置 → 本地插件 → 安装本地插件中选择本目录并确认安装。${entry} 按命令 ID 分派请求。\n\n` +
       data.commands.map(command => `- ${command.title}（${command.id}）：${command.interaction}，${command.executionMode}`).join('\n') +
       '\n\n直接执行和网页按钮返回 hello；列表查询返回大小写转换候选，选择后返回转换结果。网页通过 onEnter 获取当前命令，通过输入和提交事件接收顶部参数，退出时清理监听。\n\n' +
-      (data.runtime === 'shell' ? '使用系统 zsh，通过 LEAP_COMMAND_ID 传递命令；后台输出不显示。\n'
+      (data.runtime === 'shell' ? '使用系统 zsh，通过 LEAP_COMMAND_ID 传递命令；后台输出不显示。main.zsh 就是脚本本体；多条命令时每个 case 分支对应一条命令，改分支里的内容即可。\n'
         : '宿主注入 leap；交互会话复用进程，退出即释放，动作结果直接返回字符串。日志使用 leap.log；业务回调限时 3 秒，宿主调用等待另计，每个事件累计最多 60 秒。\n') +
       (data.withUI ? '\n当前生成器创建内嵌网页，宽度跟随启动器；默认宽度仅用于独立窗口。内嵌网页默认高度包含宿主操作栏；独立窗口默认高度为网页内容高度，不包含系统标题栏。尺寸按可用屏幕裁剪。独立窗口可拖动调整大小，重新打开恢复默认尺寸。要使用独立窗口，手动省略网页命令的 mode、presentation、input，同时保留 webEntry 和 webWindow。\n' : '') +
       (data.includeIcon ? '\n可替换 icon.png 为自己的 PNG 图标。\n' : '') +

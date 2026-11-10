@@ -168,12 +168,18 @@ final class LauncherPanelController {
             model.exitInteraction()
             return true
         }
+        // 收起面板（Esc、失焦、切设置）一律终止前台 Shell，避免任务在后台静默跑完。
+        panel.shellRunDidHide = { [weak model] in model?.exitShellRun() }
         panel.contentView = LauncherHostingView(
             rootView: LauncherView(model: model) { [weak panel, weak model] height in
                 guard let panel else {
                     return
                 }
-                Self.resize(panel, toContentHeight: height, keepWithinScreen: model?.interaction != nil)
+                Self.resize(
+                    panel,
+                    toContentHeight: height,
+                    keepWithinScreen: model?.interaction != nil || model?.showsShellRun == true
+                )
             } showSettings: { [weak self, weak panel] in
                 let screen = panel?.screen
                 // 先隐藏启动器，再交给设置面板接管键盘焦点。
@@ -259,6 +265,7 @@ private final class LauncherPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     var exitInteraction: (() -> Bool)?
+    var shellRunDidHide: (() -> Void)?
     var preservesHostCall: (() -> Bool)?
     var activateListShortcut: ((Int, Bool) -> Bool)?
     private var consumesEscape = false
@@ -296,6 +303,11 @@ private final class LauncherPanel: NSPanel {
         Self.logger.debug("启动器收到取消操作，已收起。")
         // Escape 只隐藏常驻面板，避免结束应用或破坏下一次快捷键唤起。
         orderOut(sender)
+    }
+
+    override func orderOut(_ sender: Any?) {
+        shellRunDidHide?()
+        super.orderOut(sender)
     }
 
     override func resignKey() {

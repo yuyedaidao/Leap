@@ -62,6 +62,9 @@ test('Shell 多命令支持后台，未知 ID 非零退出', t => {
     assert.equal(result.status, id === 'unknown' ? 1 : 0);
     assert.equal(result.stdout, id === 'unknown' ? '' : 'hello\n');
   }
+  // 每条命令各自一个分支，用户才能给不同命令写不同逻辑。
+  const source = fs.readFileSync(path.join(input.directory, 'main.zsh'), 'utf8');
+  assert.ok(source.includes("'front')") && source.includes("'back')"));
 });
 
 test('空数组、重复ID、非法组合及匹配边界均在写入前拒绝', t => {

@@ -233,11 +233,35 @@ leap.onInvoke(lambda context: 'hello')
 
 Shell 入口使用系统 `/bin/zsh`，命令 ID 来自 `LEAP_COMMAND_ID`。foreground 显示持续输出，可停止；background 启动后收起启动器，输出不展示。
 
+foreground 命令一旦启动，启动器就整块切换为该命令的运行视图：头部搜索框换成插件标签（图标 + 插件名 + 关闭按钮），下方是状态行与输出区，搜索结果与最近使用不再显示。Shell 命令不能声明 `input` 或 `matches`，所以运行时没有可输入的控件，要继续搜索请先点关闭按钮返回。自然结束后输出保留在面板中，可选中复制；点关闭按钮回到搜索，按 Esc 收起面板。Esc、失去焦点、进入设置等任何收起面板的动作都会终止正在运行的前台脚本。
+
+`LEAP_COMMAND_ID` 是宿主注入的环境变量，值是本次执行的命令 ID。一个插件只有一条命令时不需要分派，`main.zsh` 就是脚本本体：
+
 ```zsh
 #!/bin/zsh
 set -eu
+
+# ↓ 在这里写你的脚本；标准输出会显示在启动器里。
+printf '%s\n' 'hello'
+```
+
+多条命令共用一个入口文件，用 `case` 按 `LEAP_COMMAND_ID` 分派；每个分支就是那条命令的脚本，未知 ID 必须失败，避免误执行业务动作：
+
+```zsh
+#!/bin/zsh
+set -eu
+
 case "${LEAP_COMMAND_ID:-}" in
-  hello.run) printf '%s\n' 'hello' ;;
+  # 输出 hello
+  'hello.print')
+    # ↓ 在这里写这条命令的脚本
+    printf '%s\n' 'hello'
+    ;;
+  # 打开项目
+  'hello.open')
+    # ↓ 在这里写这条命令的脚本
+    open /path/to/project
+    ;;
   *) printf '%s\n' '未知命令。' >&2; exit 1 ;;
 esac
 ```

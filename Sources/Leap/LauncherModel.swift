@@ -101,6 +101,8 @@ final class LauncherModel {
     private(set) var applications: [SystemApplicationDescriptor] = []
     private(set) var recentItems: [LauncherItem] = []
     private(set) var invocationState = InvocationState.idle
+    /// 前台 Shell 运行视图所属的命令；仅用于头部标签展示。
+    private(set) var shellRunCommand: PluginCommandDescriptor?
     private(set) var webCommand: PluginCommandDescriptor?
     private(set) var interaction: PluginInteractionSession?
     private(set) var focusRequestID = 0
@@ -226,18 +228,6 @@ final class LauncherModel {
         refreshApplications()
     }
 
-    func requestSearchFocus() {
-        focusRequestID &+= 1
-    }
-
-    func prepareForPresentation() {
-        invocationRevision &+= 1
-        closeActionSession()
-        exitInteraction()
-        query = ""
-        invocationState = .idle
-    }
-
     func activateFirstSearchResult() {
         guard let first = searchResults.first else {
             return
@@ -247,6 +237,8 @@ final class LauncherModel {
 
     func activateListShortcut(at index: Int, isRepeat: Bool) -> Bool {
         if let interaction { return interaction.list?.select(at: index, isRepeat: isRepeat) ?? false }
+        // 前台 Shell 运行视图没有列表，数字快捷键不能操作已隐藏的搜索结果。
+        guard !showsShellRun else { return false }
         let results = searchResults
         guard results.indices.contains(index) else { return false }
         if isRepeat { return true }
@@ -503,9 +495,42 @@ extension LauncherModel {
 
 }
 
+/// 启动器每次唤起/收起时的呈现生命周期。
 extension LauncherModel {
+    func requestSearchFocus() {
+        focusRequestID &+= 1
+    }
+
+    func prepareForPresentation() {
+        invocationRevision &+= 1
+        closeActionSession()
+        exitInteraction()
+        // 收起即终止前台脚本，避免重新唤起时留下孤儿任务。
+        exitShellRun()
+        query = ""
+        invocationState = .idle
+    }
+}
+
+extension LauncherModel {
+    /// 前台 Shell 运行/结果视图接管整个面板，不再显示搜索列表。
+    var showsShellRun: Bool {
+        if case .shellOutput = invocationState { return true }
+        return false
+    }
+
     func stopForegroundShell() {
         foregroundShellTask?.cancel()
+    }
+
+    /// 退出前台 Shell 运行视图，回到搜索。
+    func exitShellRun() {
+        stopForegroundShell()
+        // 先断开关联，避免已终止任务的回调又把面板拉回运行视图。
+        foregroundShellTask = nil
+        shellRunCommand = nil
+        invocationState = .idle
+        requestSearchFocus()
     }
 
     private func activateShell(_ command: PluginCommandDescriptor) {
@@ -549,6 +574,8 @@ extension LauncherModel {
                 foregroundShellTask = task
                 invocationState = .shellOutput(title: command.title, output: "", isRunning: true)
                 try task.start(onOutput: outputHandler)
+                // 启动成功才把命令交给头部标签，启动失败仍展搜索界面与错误信息。
+                shellRunCommand = command
 
                 Task { [weak self, task] in
                     let result = await Task.detached(priority: .userInitiated) {
@@ -563,6 +590,8 @@ extension LauncherModel {
                 }
             } catch {
                 Self.logger.error("前台 Shell 脚本启动失败：\(error.localizedDescription)。")
+                foregroundShellTask = nil
+                shellRunCommand = nil
                 invocationState = .failed(error.localizedDescription)
             }
         }

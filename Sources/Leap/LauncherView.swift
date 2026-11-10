@@ -32,12 +32,21 @@ struct LauncherView: View {
                 moveSearchSelection: moveSearchSelection,
                 moveRecentSelection: moveRecentSelection,
                 interaction: model.interaction,
+                shellCommand: model.shellRunCommand,
                 focusRequestID: model.focusRequestID,
-                exitInteraction: model.exitInteraction
+                exitInteraction: model.exitInteraction,
+                exitShellRun: model.exitShellRun
             )
             if let interaction = model.interaction {
                 PluginInteractionView(session: interaction)
                 .id(interaction.id)
+            } else if case let .shellOutput(title, output, isRunning) = model.invocationState {
+                ShellRunOutput(
+                    title: title,
+                    output: output,
+                    isRunning: isRunning,
+                    stop: model.stopForegroundShell
+                )
             } else {
                 LauncherContent(
                     query: model.query,
@@ -48,10 +57,7 @@ struct LauncherView: View {
                     activate: model.activate
                 )
                 if model.invocationState != .idle {
-                    LauncherInvocationFeedback(
-                        state: model.invocationState,
-                        stopForegroundShell: model.stopForegroundShell
-                    )
+                    LauncherInvocationFeedback(state: model.invocationState)
                 }
             }
         }
@@ -137,13 +143,27 @@ private struct LauncherSearchHeader: View {
     let moveSearchSelection: (Int) -> Bool
     let moveRecentSelection: (Int) -> Bool
     var interaction: PluginInteractionSession?
+    // 前台 Shell 运行中：查询框换成插件标签，此时没有可输入的控件。
+    var shellCommand: PluginCommandDescriptor?
     var focusRequestID = 0
     var exitInteraction: () -> Void = {}
+    var exitShellRun: () -> Void = {}
 
     var body: some View {
         GeometryReader { geometry in
             HStack(alignment: .center, spacing: 12) {
-                if let interaction {
+                if let shellCommand {
+                    PluginHeaderTag(
+                        iconURL: shellCommand.iconURL,
+                        runtime: shellCommand.manifest.runtime,
+                        name: shellCommand.pluginName,
+                        title: shellCommand.pluginName == shellCommand.title ? nil : shellCommand.title,
+                        exit: exitShellRun
+                    )
+                    // 插件名过长时截断，不能把右侧设置按钮顶出窗口。
+                    .frame(maxWidth: max(0, geometry.size.width - 80) * 0.45, alignment: .leading)
+                    Spacer()
+                } else if let interaction {
                     @Bindable var interaction = interaction
                     PluginInteractionTag(session: interaction, exit: exitInteraction)
                         // 扣除边距、设置按钮和间距后，限制标签宽度以保留参数输入空间。
@@ -411,7 +431,6 @@ struct CommandIcon: View {
 
 private struct LauncherInvocationFeedback: View {
     let state: LauncherModel.InvocationState
-    let stopForegroundShell: () -> Void
 
     var body: some View {
         switch state {
@@ -432,37 +451,55 @@ private struct LauncherInvocationFeedback: View {
                 .foregroundStyle(.red)
                 .lineLimit(2)
                 .accessibilityIdentifier("launcher.pluginError")
-        case let .shellOutput(title, output, isRunning):
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label(
-                        isRunning ? "正在运行 \(title)…" : "\(title) 已结束",
-                        systemImage: isRunning ? "terminal" : "checkmark.circle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    Spacer()
-                    if isRunning {
-                        Button("停止", role: .destructive, action: stopForegroundShell)
-                            .accessibilityIdentifier("launcher.stopShellButton")
-                    }
+        case .shellOutput:
+            // 前台 Shell 有自己的运行视图，不再与搜索列表并排显示。
+            EmptyView()
+        }
+    }
+}
+
+private struct ShellRunOutput: View {
+    static let maximumTextHeight: CGFloat = 320
+    let title: String
+    let output: String
+    let isRunning: Bool
+    let stop: () -> Void
+    @State private var textHeight: CGFloat = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(
+                    isRunning ? "正在运行 \(title)…" : "\(title) 已结束",
+                    systemImage: isRunning ? "terminal" : "checkmark.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Spacer()
+                if isRunning {
+                    Button("停止", role: .destructive, action: stop)
+                        .accessibilityIdentifier("launcher.stopShellButton")
                 }
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        Text(output.isEmpty ? "正在等待输出…" : output)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                        Color.clear.frame(height: 1).id("shellOutputEnd")
-                    }
-                    .frame(maxHeight: 220)
-                    .onAppear { proxy.scrollTo("shellOutputEnd", anchor: .bottom) }
-                    .onChange(of: output) { proxy.scrollTo("shellOutputEnd", anchor: .bottom) }
-                }
-                .padding(10)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .accessibilityIdentifier("launcher.shellOutput")
             }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(output.isEmpty ? "正在等待输出…" : output)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        // ScrollView 在滚动轴上没有固有高度，靠测出的文本高度定高，否则会塌成 0。
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                            textHeight = height
+                        }
+                    Color.clear.frame(height: 1).id("shellOutputEnd")
+                }
+                .frame(height: min(max(textHeight + 1, 44), Self.maximumTextHeight))
+                .onAppear { proxy.scrollTo("shellOutputEnd", anchor: .bottom) }
+                .onChange(of: output) { proxy.scrollTo("shellOutputEnd", anchor: .bottom) }
+            }
+            .padding(10)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .accessibilityIdentifier("launcher.shellOutput")
         }
     }
 }

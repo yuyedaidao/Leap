@@ -34,28 +34,51 @@ struct PluginInteractionView: View {
     }
 }
 
+/// 插件会话头部标签：交互插件与前台 Shell 共用，表示启动器当前已进入某个插件。
 struct PluginInteractionTag: View {
     let session: PluginInteractionSession
+    let exit: () -> Void
+
+    var body: some View {
+        PluginHeaderTag(
+            iconURL: session.command.iconURL,
+            runtime: session.command.manifest.runtime,
+            name: session.command.pluginName,
+            title: session.command.pluginName == session.configuration.title ? nil : session.configuration.title,
+            showsLoading: session.list?.isLoadingVisible == true,
+            isSelecting: session.list?.isSelecting == true,
+            exit: exit
+        )
+    }
+}
+
+struct PluginHeaderTag: View {
+    let iconURL: URL?
+    let runtime: PluginManifest.Runtime
+    let name: String
+    var title: String?
+    var showsLoading = false
+    var isSelecting = false
     let exit: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
             // 图标装饰与可访问的加载状态分开，避免隐藏图标时同时隐藏状态说明。
             ZStack {
-                CommandIcon(iconURL: session.command.iconURL, runtime: session.command.manifest.runtime)
+                CommandIcon(iconURL: iconURL, runtime: runtime)
                     .frame(width: 28, height: 28)
                     .accessibilityHidden(true)
-                if session.list?.isLoadingVisible == true {
-                    PluginLoadingRing(isSelecting: session.list?.isSelecting == true)
+                if showsLoading {
+                    PluginLoadingRing(isSelecting: isSelecting)
                 }
             }
             .frame(width: 28, height: 28)
             HStack(spacing: 6) {
-                Text(session.command.pluginName)
+                Text(name)
                     .accessibilityIdentifier("plugin.activeName")
-                if session.command.pluginName != session.configuration.title {
+                if let title {
                     Text("/").foregroundStyle(.secondary).accessibilityHidden(true)
-                    Text(session.configuration.title)
+                    Text(title)
                         .accessibilityIdentifier("plugin.activeTitle")
                 }
             }
@@ -74,8 +97,7 @@ struct PluginInteractionTag: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-        .help(session.command.pluginName == session.configuration.title
-            ? session.command.pluginName : "\(session.command.pluginName) / \(session.configuration.title)")
+        .help(title.map { "\(name) / \($0)" } ?? name)
     }
 }
 
