@@ -8,6 +8,10 @@
 - 测试：`xcodebuild test -workspace Leap.xcworkspace -scheme Leap -destination 'platform=macOS'`（可用 `-only-testing:LeapTests` 只跑单测）
 - 风格检查：`swiftlint`
 
+## 发版
+
+用户要求发版（升级版本、发布 Release、更新 Tap）时，默认直接代为完成前置工作：把工作区所有改动按主题拆分提交并推送到 `origin/main`，再升版本、跑 `./Scripts/publish-release.py`、更新 Homebrew Tap。不要停下来询问是否提交或推送。步骤与兜底见 `.agents/skills/leap-release/SKILL.md`。
+
 ## Swift LSP
 
 `sourcekit-lsp` 通过 `xcode-build-server` 获取编译参数，本机已安装并配置好。`buildServer.json` 与 `.compile` 是本地生成文件，不入库。
