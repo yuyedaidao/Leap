@@ -48,6 +48,11 @@ def require_clean():
     if run("git", "status", "--porcelain", "--untracked-files=all"):
         raise ValueError("源码工作区有未提交改动，请先提交或自行整理；脚本不会自动提交或清理。")
 
+def require_pushed(repo, commit):
+    """未推送的提交无法作为发行标签目标，GitHub 会拒绝；在耗时构建前就失败。"""
+    if github(f"repos/{repo}/commits/{commit}") is None:
+        raise ValueError(f"提交 {commit[:7]} 尚未推送到 {repo}，请先 push 再发行。")
+
 
 def tuist_executable():
     # 旧 tuistenv 会截获 install，优先调用它已选择的真实版本以安装项目依赖。
@@ -246,6 +251,8 @@ def generate_update_feed(app, dmg, notes, repo, tag, output):
 def release(args):
     repository, identity, profile = preflight(args)
     commit = run("git", "rev-parse", "HEAD")
+    if not args.local_only:
+        require_pushed(args.repo, commit)
     source_diff = run("git", "diff", "HEAD") if args.local_only and args.test else ""
     output_root = ROOT / "build/releases"
     output_root.mkdir(parents=True, exist_ok=True)

@@ -58,7 +58,7 @@ python3 Scripts/publish-release.py --local-only --test
 ./Scripts/publish-release.py
 ```
 
-需要有效的 Developer ID Application 证书与 `LeapNotary` 公证配置、`gh` 登录，且 Git 工作区干净。脚本会构建、签名、公证，并以 Release 形式发布到本仓库。
+需要有效的 Developer ID Application 证书与 `LeapNotary` 公证配置、`gh` 登录，且 Git 工作区干净、提交已推送到 `origin`。脚本会构建、签名、公证，并以 Release 形式发布到本仓库。需要逐步清单时参见 `.agents/skills/leap-release/SKILL.md`。
 
 正式 Release 公开后，按 `SHA256SUMS.txt` 手动更新 [Homebrew Tap](https://github.com/yuyedaidao/homebrew-tap) 中 `Casks/leap.rb` 的 `version` 和 `sha256`。
 

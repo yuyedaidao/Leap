@@ -38,6 +38,15 @@ class PublishTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.release_info(app, True)
 
+    def test_pushed_commit_is_required_before_building(self):
+        # 未推送的提交会让 gh release create 报 target_commitish 无效，必须在构建前拦住。
+        with patch.object(release, "github", return_value=None):
+            with self.assertRaises(ValueError):
+                release.require_pushed("test/repo", "a" * 40)
+        with patch.object(release, "github", return_value={"sha": "a" * 40}) as github:
+            release.require_pushed("test/repo", "a" * 40)
+            github.assert_called_once_with(f"repos/test/repo/commits/{'a' * 40}")
+
     def test_github_only_treats_explicit_404_as_missing(self):
         for status in (401, 403, 404, 500):
             error = subprocess.CalledProcessError(1, ["gh"], stderr=f"gh: Not Found (HTTP {status})")
@@ -278,6 +287,8 @@ class PublishTests(unittest.TestCase):
                      patch.object(release, "preflight", return_value=(self.repository, "identity", "profile")), \
                      patch.object(release, "require_clean", side_effect=ValueError("锁文件有改动") if failure == "source" else None), \
                      patch.object(release, "require_new_tag"), \
+                     patch.object(release, "require_pushed"), \
+                     patch.object(release, "require_pushed"), \
                      patch.object(release, "check_repo", return_value=self.repository), \
                      patch.object(release, "run", side_effect=command), \
                      patch.object(release, "generate_update_feed", return_value=self.root / "appcast.xml",
