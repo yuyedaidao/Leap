@@ -33,7 +33,12 @@ public struct PluginStoreSource: Equatable, Sendable {
 
     /// 索引直接走 raw 地址，不占用 GitHub API 的匿名限额。
     public var indexURL: URL {
-        URL(string: "https://raw.githubusercontent.com/\(owner)/\(repository)/\(reference)/store.json")!
+        rawURL(path: "store.json")!
+    }
+
+    /// 仓库内任意文件的 raw 地址：索引与插件图标用上同一套 owner/repo/ref。
+    public func rawURL(path: String) -> URL? {
+        URL(string: "https://raw.githubusercontent.com/\(owner)/\(repository)/\(reference)/\(path)")
     }
 }
 
@@ -43,26 +48,29 @@ public struct PluginStoreEntry: Decodable, Equatable, Sendable, Identifiable {
     public let version: String
     public let summary: String?
     public let path: String
+    /// 图标相对插件目录的路径；商店行据此拼 raw 地址远程加载。
+    public let icon: String?
     public let runtime: String?
     public let minimumHostVersion: String?
     public let commands: [String]
 
     public init(
         id: String, name: String, version: String, summary: String? = nil, path: String,
-        runtime: String? = nil, minimumHostVersion: String? = nil, commands: [String] = []
+        icon: String? = nil, runtime: String? = nil, minimumHostVersion: String? = nil, commands: [String] = []
     ) {
         self.id = id
         self.name = name
         self.version = version
         self.summary = summary
         self.path = path
+        self.icon = icon
         self.runtime = runtime
         self.minimumHostVersion = minimumHostVersion
         self.commands = commands
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, version, summary, path, runtime, minimumHostVersion, commands
+        case id, name, version, summary, path, icon, runtime, minimumHostVersion, commands
     }
 
     /// `commands` 缺省视为没有命令标题，不让单个可选字段让整份索引解码失败。
@@ -73,6 +81,7 @@ public struct PluginStoreEntry: Decodable, Equatable, Sendable, Identifiable {
         version = try container.decode(String.self, forKey: .version)
         summary = try container.decodeIfPresent(String.self, forKey: .summary)
         path = try container.decode(String.self, forKey: .path)
+        icon = try container.decodeIfPresent(String.self, forKey: .icon)
         runtime = try container.decodeIfPresent(String.self, forKey: .runtime)
         minimumHostVersion = try container.decodeIfPresent(String.self, forKey: .minimumHostVersion)
         commands = try container.decodeIfPresent([String].self, forKey: .commands) ?? []
@@ -102,6 +111,12 @@ public struct PluginStoreEntry: Decodable, Equatable, Sendable, Identifiable {
 
     public func installAddress(source: PluginStoreSource) -> String {
         "https://github.com/\(source.owner)/\(source.repository)/tree/\(source.reference)/\(path)"
+    }
+
+    /// 图标与安装地址同源：同样走 raw 地址，不占 GitHub API 限额。
+    public func iconURL(source: PluginStoreSource) -> URL? {
+        guard let icon, isValidIconPath else { return nil }
+        return source.rawURL(path: "\(path)/\(icon)")
     }
 }
 
@@ -146,6 +161,8 @@ public struct PluginStoreIndex: Decodable, Equatable, Sendable {
             identifiers.insert(entry.id)
             return true
         }
+        // 图标只是装饰信息，路径不安全时丢掉图标保留条目，不让一条坏图标连插件一起消失。
+        .map { $0.isValidIconPath ? $0 : $0.withoutIcon }
         return PluginStoreIndex(
             schemaVersion: raw.schemaVersion, name: raw.name, plugins: Array(entries.prefix(maximumEntries)))
     }
@@ -170,5 +187,23 @@ extension PluginStoreEntry {
             })
         else { return false }
         return true
+    }
+
+    /// 与清单校验同一规则：相对路径、无 `..`、扩展名限清单支持的类型。
+    fileprivate var isValidIconPath: Bool {
+        guard let icon else { return true }
+        guard !icon.isEmpty, !icon.hasPrefix("/"), !icon.contains("\\"),
+            !icon.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else { return false }
+        guard !icon.split(separator: "/", omittingEmptySubsequences: false)
+            .contains(where: { $0.isEmpty || $0 == "." || $0 == ".." })
+        else { return false }
+        return ["png", "jpg", "jpeg", "icns"].contains((icon as NSString).pathExtension.lowercased())
+    }
+
+    fileprivate var withoutIcon: PluginStoreEntry {
+        PluginStoreEntry(
+            id: id, name: name, version: version, summary: summary, path: path, icon: nil, runtime: runtime,
+            minimumHostVersion: minimumHostVersion, commands: commands)
     }
 }

@@ -56,7 +56,15 @@ private struct LeapSettingsView: View {
         case .list: return SettingsSection.plugins.title
         case .store: return "插件商店"
         case .details: return selectedPlugin?.manifest.name ?? SettingsSection.plugins.title
+        case let .storeDetails(entryID):
+            return coordinator.pluginStore.entry(id: entryID)?.name ?? "插件商店"
         }
+    }
+
+    /// 商店详情是商店的子页，其余详情都回到插件列表。
+    private var backTarget: PluginSettingsRoute {
+        if case .storeDetails = pluginRoute { return .store }
+        return .list
     }
 
     var body: some View {
@@ -84,8 +92,8 @@ private struct LeapSettingsView: View {
             .toolbar {
                 if selectedSection == .plugins, pluginRoute != .list {
                     ToolbarItem(placement: .navigation) {
-                        Button { pluginRoute = .list } label: {
-                            Label("返回插件列表", systemImage: "chevron.left")
+                        Button { pluginRoute = backTarget } label: {
+                            Label(backTarget == .store ? "返回插件商店" : "返回插件列表", systemImage: "chevron.left")
                         }
                         .labelStyle(.iconOnly)
                         .accessibilityIdentifier("settings.pluginDetails.back")

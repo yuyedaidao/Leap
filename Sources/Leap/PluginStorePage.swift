@@ -8,8 +8,8 @@ struct PluginStorePage: View {
 
     @State private var query = PluginStoreQuery()
 
-    private var installedVersions: [String: String] {
-        Dictionary(installation.plugins.map { ($0.id, $0.manifest.version) }, uniquingKeysWith: { first, _ in first })
+    private var installedPlugins: [String: InstalledPluginDescriptor] {
+        Dictionary(installation.plugins.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     private var visibleEntries: [PluginStoreEntry] {
@@ -20,7 +20,6 @@ struct PluginStorePage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if isBusy { downloadBanner }
             list
             if let error = installation.errorMessage {
                 SettingsErrorMessage(error)
@@ -31,6 +30,7 @@ struct PluginStorePage: View {
             }
         }
         .padding(24)
+        .safeAreaInset(edge: .bottom, spacing: 0) { updatedAtBar }
         .searchable(text: $query.searchText, placement: .toolbar, prompt: "搜索商店插件")
         .toolbar {
             ToolbarItem(id: "plugin-store-refresh", placement: .primaryAction) {
@@ -60,18 +60,16 @@ struct PluginStorePage: View {
                     ForEach(visibleEntries) { entry in
                         PluginStoreRow(
                             entry: entry,
-                            state: entry.state(installedVersion: installedVersions[entry.id]),
+                            state: entry.state(installedVersion: installedPlugins[entry.id]?.manifest.version),
+                            installed: installedPlugins[entry.id],
                             isBusy: isBusy,
+                            requestDetails: { open(entry) },
                             requestInstall: { install(entry) }
                         )
                     }
                 } header: {
                     Text("\(store.index?.name ?? "官方插件") · \(visibleEntries.count)")
                         .accessibilityIdentifier("settings.pluginStoreGroup")
-                } footer: {
-                    if let updatedAt = store.updatedAt {
-                        Text("索引更新于 \(updatedAt.formatted(date: .abbreviated, time: .shortened))")
-                    }
                 }
             }
             .listStyle(.inset)
@@ -79,64 +77,82 @@ struct PluginStorePage: View {
         }
     }
 
-    private var downloadBanner: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(installation.remotePhase ?? "正在准备插件")
-                    .accessibilityIdentifier("settings.pluginStorePhase")
+    /// 索引更新于固定在底部状态条，避免随列表滚走或被当成普通行。
+    private var updatedAtBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 8) {
+                Text(updatedAtText)
+                    .accessibilityIdentifier("settings.pluginStoreUpdatedAt")
                 Spacer()
-                Button("取消") { installation.rejectInstallation() }
-                    .disabled(installation.isInstalling)
-                    .accessibilityIdentifier("settings.pluginStoreCancel")
+                if store.isShowingCachedResult {
+                    Text("显示上次结果")
+                }
             }
-            if let progress = installation.progress, progress.totalFiles > 0 {
-                ProgressView(value: Double(progress.completedFiles), total: Double(progress.totalFiles))
-                Text(
-                    "\(progress.completedFiles) / \(progress.totalFiles) 个文件 · "
-                        + progress.downloadedBytes.formatted(.byteCount(style: .file))
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            } else if installation.isPreparing {
-                ProgressView().controlSize(.small)
-            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 8)
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(.bar)
+    }
+
+    private var updatedAtText: String {
+        guard let updatedAt = store.updatedAt else { return "尚未获取索引" }
+        return "索引更新于 \(updatedAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    /// 已安装的插件有完整详情页（启用、命令、更新、卸载），未安装的只有索引字段。
+    private func open(_ entry: PluginStoreEntry) {
+        route = installedPlugins[entry.id] == nil ? .storeDetails(entry.id) : .details(entry.id)
     }
 
     private func install(_ entry: PluginStoreEntry) {
-        installation.installFromStore(address: entry.installAddress(source: .official), pluginID: entry.id)
+        installation.installFromStore(
+            address: entry.installAddress(source: .official), pluginID: entry.id, pluginName: entry.name)
     }
 }
 
 private struct PluginStoreRow: View {
     let entry: PluginStoreEntry
     let state: PluginStoreEntry.State
+    let installed: InstalledPluginDescriptor?
     let isBusy: Bool
+    let requestDetails: () -> Void
     let requestInstall: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            PluginIcon(iconURL: nil, runtime: entry.runtime.flatMap(PluginManifest.Runtime.init(rawValue:)))
-                .frame(width: 32, height: 32)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.name)
-                if let summary = entry.summary, !summary.isEmpty {
-                    Text(summary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+            // 与插件列表一致：整块信息区都是详情入口，动作按钮独立。
+            Button(action: requestDetails) {
+                HStack(spacing: 12) {
+                    PluginStoreIcon(entry: entry, installed: installed)
+                        .frame(width: 32, height: 32)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(entry.name)
+                        if let summary = entry.summary, !summary.isEmpty {
+                            Text(summary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1)
+                    Spacer()
                 }
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
             }
-            .lineLimit(1)
-            Spacer()
+            .buttonStyle(.plain)
+            .accessibilityLabel("查看 \(entry.name) 详情")
+            .accessibilityIdentifier("settings.pluginStoreDetails.\(entry.id)")
             action
+            Image(systemName: "chevron.right")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
         }
-        .accessibilityElement(children: .contain)
     }
 
     private var detail: String {
@@ -167,6 +183,36 @@ private struct PluginStoreRow: View {
             Button("更新到 \(entry.version)", action: requestInstall)
                 .disabled(isBusy)
                 .accessibilityIdentifier("settings.pluginStoreUpdate.\(entry.id)")
+        }
+    }
+}
+
+/// 已安装的插件直接用本机图标，未安装的按索引里的相对路径远程加载，失败回落符号占位。
+/// 商店详情页也用它，故不设为 private。
+struct PluginStoreIcon: View {
+    let entry: PluginStoreEntry
+    let installed: InstalledPluginDescriptor?
+
+    private var runtime: PluginManifest.Runtime? {
+        entry.runtime.flatMap(PluginManifest.Runtime.init(rawValue:))
+    }
+
+    var body: some View {
+        if let installed {
+            PluginIcon(plugin: installed)
+        } else if let iconURL = entry.iconURL(source: .official) {
+            AsyncImage(url: iconURL) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                } else {
+                    PluginIcon(iconURL: nil, runtime: runtime)
+                }
+            }
+        } else {
+            PluginIcon(iconURL: nil, runtime: runtime)
         }
     }
 }

@@ -4,11 +4,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 import YQLogger
 
-/// 插件页内部的三种态共用一个详情列，商店与列表/详情互斥切换。
+/// 插件页内部的四种态共用一个详情列，商店与列表/详情互斥切换。
 enum PluginSettingsRoute: Equatable {
     case list
     case details(String)
     case store
+    /// 商店里未安装条目的详情，返回时回到商店。
+    case storeDetails(String)
 }
 
 struct PluginSettingsPage: View {
@@ -68,6 +70,8 @@ struct PluginSettingsPage: View {
             listContent
         case let .details(pluginID):
             detailsContent(pluginID)
+        case let .storeDetails(entryID):
+            storeDetailsContent(entryID)
         }
     }
 
@@ -111,6 +115,25 @@ struct PluginSettingsPage: View {
         }
     }
 
+    @ViewBuilder
+    private func storeDetailsContent(_ entryID: String) -> some View {
+        if let entry = store.entry(id: entryID) {
+            PluginStoreDetailsView(
+                entry: entry,
+                state: entry.state(
+                    installedVersion: installation.plugins.first { $0.id == entryID }?.manifest.version),
+                isBusy: installation.isPreparing || installation.isInstalling,
+                requestInstall: {
+                    installation.installFromStore(
+                        address: entry.installAddress(source: .official), pluginID: entry.id, pluginName: entry.name)
+                }
+            )
+            .id(entry.id)
+        } else {
+            ContentUnavailableView("商店里已没有这个插件", systemImage: "storefront")
+        }
+    }
+
     private var installationConfirmationBinding: Binding<Bool> {
         Binding(
             get: { installation.isConfirmationPresented },
@@ -132,7 +155,8 @@ struct PluginSettingsPage: View {
                 return
             }
             route = .store
-            installation.installFromStore(address: entry.installAddress(source: .official), pluginID: pluginID)
+            installation.installFromStore(
+                address: entry.installAddress(source: .official), pluginID: pluginID, pluginName: entry.name)
         }
     }
 

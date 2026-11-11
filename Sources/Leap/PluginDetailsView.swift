@@ -209,10 +209,6 @@ private struct PluginTechnicalFields: View {
             if let webEntry = plugin.manifest.webEntry {
                 PluginDetailField(title: "网页入口", value: webEntry)
             }
-            PluginDetailField(
-                title: "安装目录", value: plugin.pluginDirectory.path,
-                identifier: "settings.pluginDetails.directory"
-            )
             PluginDetailField(title: "最低宿主版本", value: plugin.manifest.minimumHostVersion ?? "未声明")
             ForEach(plugin.manifest.commands, id: \.id) { command in
                 PluginDetailField(title: "\(command.title) · 命令 ID", value: command.id)
@@ -222,7 +218,8 @@ private struct PluginTechnicalFields: View {
     }
 }
 
-private struct PluginDetailField: View {
+/// 商店详情页也用它，故不设为 private。
+struct PluginDetailField: View {
     let title: String
     let value: String
     var identifier = ""
