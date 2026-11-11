@@ -82,11 +82,11 @@
 - [x] 2. 提交测试（第 3 条）与文档（第 4 条）。
 - [x] 3. 改 `Project.swift` 为 `0.0.6`/`6`，提交 `chore: 发布 Leap 0.0.6`；确认 `git status` 干净。
 - [x] 4. `git checkout main` → `git merge --ff-only feature/plugin-store` → `git push origin main`；再确认 `git rev-parse HEAD` 与 `git log origin/main -1` 一致。
-- [ ] 5. 写 `/tmp/notes-0.0.6.md`（用上面的草稿），运行 `./Scripts/publish-release.py --notes-file /tmp/notes-0.0.6.md`。
-- [ ] 6. 若脚本在下载/上传阶段失败：不重跑整脚本，按 SKILL 用手工 `gh release create --draft` + `gh release upload` + 逐字节比对 + `gh release edit --draft=false --latest=true` 补齐。
-- [ ] 7. 更新 `yuyedaidao/homebrew-tap` 的 `Casks/leap.rb`（`version`/`sha256`），提交 `leap 0.0.6` 并推送。
-- [ ] 8. 删除已合并远端分支：`git push origin --delete feature/plugin-store`、`git -C /Users/wyq/Work/Project/2026/LeapPlugins push origin --delete feature/store-index`。
-- [ ] 9. 按验收清单核对并汇报（Release 链接、DMG SHA256、Tap 提交号；Gitee 镜像默认不同步）。
+- [x] 5. 写 `/tmp/notes-0.0.6.md`（用上面的草稿），运行 `./Scripts/publish-release.py --notes-file /tmp/notes-0.0.6.md`。
+- [x] 6. 若脚本在下载/上传阶段失败：不重跑整脚本，按 SKILL 用手工 `gh release create --draft` + `gh release upload` + 逐字节比对 + `gh release edit --draft=false --latest=true` 补齐。
+- [x] 7. 更新 `yuyedaidao/homebrew-tap` 的 `Casks/leap.rb`（`version`/`sha256`），提交 `leap 0.0.6` 并推送。
+- [x] 8. 删除已合并远端分支：`git push origin --delete feature/plugin-store`、`git -C /Users/wyq/Work/Project/2026/LeapPlugins push origin --delete feature/store-index`。
+- [x] 9. 按验收清单核对并汇报（Release 链接、DMG SHA256、Tap 提交号；Gitee 镜像默认不同步）。
 
 ## Verification
 
