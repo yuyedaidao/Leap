@@ -12,16 +12,18 @@ struct RemotePluginInstallView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(installation.isUpdating ? "从远程地址更新" : "从远程地址安装")
+            Text(title)
                 .font(.title2.bold())
-            Text("粘贴公开 GitHub 仓库中的插件目录链接，仅下载所选插件。")
-                .foregroundStyle(.secondary)
-            TextField("https://github.com/owner/repo/tree/main/plugins/hello", text: $address)
-                .textFieldStyle(.roundedBorder)
-                .accessibilityLabel("插件目录地址")
-                .accessibilityIdentifier("settings.remotePluginAddress")
-                .disabled(installation.isPreparing || installation.candidate != nil || installation.isInstalling)
-                .onSubmit { installation.downloadRemote(address: address) }
+            if !isStoreInstall {
+                Text("粘贴公开 GitHub 仓库中的插件目录链接，仅下载所选插件。")
+                    .foregroundStyle(.secondary)
+                TextField("https://github.com/owner/repo/tree/main/plugins/hello", text: $address)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("插件目录地址")
+                    .accessibilityIdentifier("settings.remotePluginAddress")
+                    .disabled(installation.isPreparing || installation.candidate != nil || installation.isInstalling)
+                    .onSubmit { installation.downloadRemote(address: address) }
+            }
             if let phase = installation.remotePhase {
                 Text(phase)
                     .accessibilityIdentifier("settings.remotePluginPhase")
@@ -62,7 +64,7 @@ struct RemotePluginInstallView: View {
                         .keyboardShortcut(.defaultAction)
                         .disabled(installation.isInstalling)
                         .accessibilityIdentifier("settings.remotePluginConfirm")
-                } else {
+                } else if !isStoreInstall {
                     Button("下载并检查") { installation.downloadRemote(address: address) }
                         .keyboardShortcut(.defaultAction)
                         .disabled(
@@ -76,6 +78,16 @@ struct RemotePluginInstallView: View {
         .frame(width: 560)
         .interactiveDismissDisabled(installation.isInstalling)
         .onDisappear { installation.rejectInstallation() }
+    }
+
+    /// 商店发起的安装复用同一个弹窗：地址由索引提供，只留标题与进度/确认。
+    private var isStoreInstall: Bool { installation.storeInstallName != nil }
+
+    private var title: String {
+        if let name = installation.storeInstallName {
+            return installation.isUpdating ? "更新 \(name)" : "安装 \(name)"
+        }
+        return installation.isUpdating ? "从远程地址更新" : "从远程地址安装"
     }
 }
 

@@ -36,6 +36,8 @@ final class PluginInstallationModel {
     private(set) var progress: RemotePluginProgress?
     private(set) var remotePhase: String?
     private(set) var remoteInitialAddress = ""
+    /// 商店发起的安装/更新名称：弹窗据此隐藏地址表单，标题直接说明装什么。
+    private(set) var storeInstallName: String?
     private(set) var isPreparing = false
     private(set) var isInstalling = false
     var isConfirmationPresented = false
@@ -136,9 +138,11 @@ final class PluginInstallationModel {
         remotePhase = nil
         updateTargetID = nil
         remoteInitialAddress = ""
+        storeInstallName = nil
         clearCandidate()
     }
 
+    /// 只清候选与下载，不动 `storeInstallName`：安装失败时弹窗还在，清掉会让地址表单重新冒出来。
     private func clearCandidate() {
         candidate = nil
         isConfirmationPresented = false
@@ -158,11 +162,12 @@ final class PluginInstallationModel {
         isRemotePresented = true
     }
 
-    /// 商店安装不需要地址表单，直接按索引目录下载；已安装同 ID 时按定向更新校验。
-    func installFromStore(address: String, pluginID: String) {
+    /// 商店安装不需要地址表单，直接按索引目录下载；弹窗展示进度、候选与确认。
+    func installFromStore(address: String, pluginID: String, pluginName: String) {
         guard !isPreparing, !isInstalling, candidate == nil else { return }
         updateTargetID = plugins.contains { $0.id == pluginID } ? pluginID : nil
-        errorMessage = nil
+        storeInstallName = pluginName
+        isRemotePresented = true
         downloadRemote(address: address)
     }
 
@@ -280,6 +285,7 @@ final class PluginInstallationModel {
         clearCandidate()
         updateTargetID = nil
         remoteInitialAddress = ""
+        storeInstallName = nil
         remotePhase = nil
         progress = nil
         errorMessage = nil
