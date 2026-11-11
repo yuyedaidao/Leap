@@ -81,7 +81,7 @@
 - [x] 1. 按上表第 1–2 条提交功能改动（`git add <显式文件列表>`，不用 `git add -A`，确保不误带 `build/`、`Leap.xcodeproj`、`plans/merge-and-release.md` 之外的杂项）。
 - [x] 2. 提交测试（第 3 条）与文档（第 4 条）。
 - [x] 3. 改 `Project.swift` 为 `0.0.6`/`6`，提交 `chore: 发布 Leap 0.0.6`；确认 `git status` 干净。
-- [ ] 4. `git checkout main` → `git merge --ff-only feature/plugin-store` → `git push origin main`；再确认 `git rev-parse HEAD` 与 `git log origin/main -1` 一致。
+- [x] 4. `git checkout main` → `git merge --ff-only feature/plugin-store` → `git push origin main`；再确认 `git rev-parse HEAD` 与 `git log origin/main -1` 一致。
 - [ ] 5. 写 `/tmp/notes-0.0.6.md`（用上面的草稿），运行 `./Scripts/publish-release.py --notes-file /tmp/notes-0.0.6.md`。
 - [ ] 6. 若脚本在下载/上传阶段失败：不重跑整脚本，按 SKILL 用手工 `gh release create --draft` + `gh release upload` + 逐字节比对 + `gh release edit --draft=false --latest=true` 补齐。
 - [ ] 7. 更新 `yuyedaidao/homebrew-tap` 的 `Casks/leap.rb`（`version`/`sha256`），提交 `leap 0.0.6` 并推送。
