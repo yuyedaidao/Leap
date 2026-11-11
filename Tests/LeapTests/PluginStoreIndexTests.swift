@@ -83,6 +83,38 @@ struct PluginStoreIndexTests {
         #expect(entry.state(installedVersion: installed) == expected)
     }
 
+    @Test("图标路径解码，非法路径只丢图标不丢条目")
+    func icon() throws {
+        func decode(_ icon: String?) throws -> PluginStoreEntry? {
+            let field = icon.map { ", \"icon\": \"\($0)\"" } ?? ""
+            let entry = """
+                {
+                  "id": "com.padding.leap.json-formatter",
+                  "name": "JSON 格式化",
+                  "version": "1.1.0",
+                  "path": "plugins/json-formatter"\(field)
+                }
+                """
+            return try PluginStoreIndex.decode(
+                data("{\"schemaVersion\": 1, \"plugins\": [\(entry)]}"))
+                .plugins.first
+        }
+
+        let source = PluginStoreSource.official
+        #expect(try decode("icon.png")?.icon == "icon.png")
+        #expect(
+            try decode("icon.png")?.iconURL(source: source)?.absoluteString
+                == "https://raw.githubusercontent.com/yuyedaidao/LeapPlugins/main/plugins/json-formatter/icon.png")
+        // 缺省与非法路径都只是没有图标，条目本身保留。
+        #expect(try decode(nil)?.icon == nil)
+        #expect(try decode("../secret.png")?.icon == nil)
+        #expect(try decode("./icon.png")?.icon == nil)
+        #expect(try decode("/etc/icon.png")?.icon == nil)
+        #expect(try decode("icon.txt")?.icon == nil)
+        #expect(try decode("../secret.png")?.id == "com.padding.leap.json-formatter")
+        #expect(try decode(nil)?.iconURL(source: source) == nil)
+    }
+
     @Test("安装地址由来源与目录拼成")
     func installAddress() throws {
         let entry = try #require(

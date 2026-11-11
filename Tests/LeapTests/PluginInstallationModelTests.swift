@@ -171,6 +171,47 @@ struct PluginInstallationModelTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty)
     }
 
+    @Test("商店安装直接打开弹窗，完成后刷新插件并清空商店标记")
+    func storeInstall() async throws {
+        let fixture = try RemotePluginInstallationTests.Fixture()
+        defer { fixture.remove() }
+        var refreshes = 0
+        let (model, _, temporary) = try makeModel(fixture: fixture) { refreshes += 1 }
+        refreshes = 0
+
+        model.installFromStore(address: address, pluginID: "test.remote", pluginName: "测试插件")
+        #expect(model.isRemotePresented)
+        #expect(model.storeInstallName == "测试插件")
+        #expect(!model.isUpdating)
+        try await waitUntil { model.candidate != nil }
+        #expect(model.candidate?.manifest.id == "test.remote")
+
+        model.confirmInstallation()
+        try await waitUntil { !model.isInstalling }
+        #expect(refreshes == 1)
+        #expect(!model.isRemotePresented)
+        #expect(model.storeInstallName == nil)
+        #expect(model.plugins.contains { $0.id == "test.remote" })
+        #expect(try FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty)
+
+        // 安装失败时弹窗仍在，商店标记必须保留，否则地址表单会重新冒出来。
+        model.installFromStore(address: address, pluginID: "test.remote", pluginName: "测试插件")
+        try await waitUntil { model.candidate != nil }
+        let failedCandidate = try #require(model.candidate)
+        try Data("changed after confirmation".utf8).write(
+            to: failedCandidate.sourceDirectory.appendingPathComponent("main.js"))
+        model.confirmInstallation()
+        try await waitUntil { !model.isInstalling }
+        #expect(model.errorMessage?.contains("发生变化") == true)
+        #expect(model.isRemotePresented)
+        #expect(model.storeInstallName == "测试插件")
+
+        // 取消也要清掉商店标记，否则下一次远程安装会被当成商店流程隐藏地址表单。
+        model.installFromStore(address: address, pluginID: "test.remote", pluginName: "测试插件")
+        model.rejectInstallation()
+        #expect(model.storeInstallName == nil)
+    }
+
     @Test("远程更新失败后可重试，保留旧副本和信任")
     func failureAndRetry() async throws {
         let fixture = try RemotePluginInstallationTests.Fixture()

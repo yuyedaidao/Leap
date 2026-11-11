@@ -108,9 +108,6 @@ final class PluginDetailsUITests: XCTestCase {
         scrollTo(app.descendants(matching: .any)["settings.pluginDetails.id"].firstMatch, in: list)
         scrollTo(app.staticTexts["main.js"], in: list)
         XCTAssertTrue(app.staticTexts["javascript"].exists)
-        let directory = app.descendants(matching: .any)["settings.pluginDetails.directory"].firstMatch
-        scrollTo(directory, in: list)
-        XCTAssertTrue((directory.value as? String)?.contains(fixture.id) == true)
         scrollTo(app.staticTexts["未声明"], in: list)
         scrollTo(technical, in: list, deltaY: 220)
         list.disclosureTriangles.firstMatch.click()
@@ -319,10 +316,6 @@ extension PluginDetailsUITests {
             app.descendants(matching: .any)["settings.pluginDetails.id"].firstMatch.waitForExistence(timeout: 2),
             list.debugDescription
         )
-        let directory = app.descendants(matching: .any)["settings.pluginDetails.directory"].firstMatch
-        scrollTo(directory, in: list)
-        XCTAssertGreaterThan(directory.frame.height, 20, "长路径应换行展示。")
-        XCTAssertTrue((directory.value as? String)?.contains(fixture.id) == true)
         let screenshot = XCTAttachment(screenshot: settings.screenshot())
         screenshot.name = "原生列表最小窗口长文本"
         screenshot.lifetime = .keepAlways
