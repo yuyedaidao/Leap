@@ -80,6 +80,13 @@ public struct AppPaths: Sendable {
         resourceDirectory.appendingPathComponent("Runtimes", isDirectory: true)
     }
 
+    /// 插件商店索引缓存，离线时用它展示上次结果。
+    public var pluginStoreCacheURL: URL {
+        applicationSupportDirectory
+            .appendingPathComponent("PluginStore", isDirectory: true)
+            .appendingPathComponent("store.json")
+    }
+
     public var applicationIndexCacheURL: URL {
         applicationSupportDirectory.appendingPathComponent("application-index-v1.json")
     }

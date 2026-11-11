@@ -212,6 +212,7 @@ actor GitHubFixtureClient: RemotePluginHTTPClient {
     struct Reply: Sendable {
         let data: Data
         var status = 200
+        var headers: [String: String] = [:]
 
         static func json(_ object: [String: Any]) throws -> Self {
             Self(data: try JSONSerialization.data(withJSONObject: object))
@@ -244,6 +245,6 @@ actor GitHubFixtureClient: RemotePluginHTTPClient {
         let reply = replies[url.absoluteString.removingPercentEncoding ?? ""] ?? fallback
         let file = RemotePluginDownloaderTests.root()
         try reply.data.write(to: file)
-        return .init(file: file, status: reply.status)
+        return .init(file: file, status: reply.status, headers: reply.headers)
     }
 }
