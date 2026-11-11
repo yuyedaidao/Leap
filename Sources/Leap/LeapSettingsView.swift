@@ -42,18 +42,21 @@ private struct LeapSettingsView: View {
     let appearance: Binding<AppearancePreference>
     let updates: AppUpdateController
     @State private var selectedSection: SettingsSection? = .general
-    @State private var selectedPluginID: String?
+    @State private var pluginRoute: PluginSettingsRoute = .list
     private static let logger = YQLogger(label: "com.padding.leap/settings-navigation")
 
     private var selectedPlugin: InstalledPluginDescriptor? {
-        coordinator.pluginInstallation.plugins.first { $0.id == selectedPluginID }
+        guard case let .details(pluginID) = pluginRoute else { return nil }
+        return coordinator.pluginInstallation.plugins.first { $0.id == pluginID }
     }
 
     private var detailTitle: String {
-        if selectedSection == .plugins, let selectedPlugin {
-            return selectedPlugin.manifest.name
+        guard selectedSection == .plugins else { return (selectedSection ?? .general).title }
+        switch pluginRoute {
+        case .list: return SettingsSection.plugins.title
+        case .store: return "插件商店"
+        case .details: return selectedPlugin?.manifest.name ?? SettingsSection.plugins.title
         }
-        return (selectedSection ?? .general).title
     }
 
     var body: some View {
@@ -68,7 +71,8 @@ private struct LeapSettingsView: View {
                 case .plugins:
                     PluginSettingsPage(
                         installation: coordinator.pluginInstallation,
-                        selectedPluginID: $selectedPluginID
+                        store: coordinator.pluginStore,
+                        route: $pluginRoute
                     )
                 case .data:
                     DataSettingsPage(coordinator: coordinator)
@@ -78,9 +82,9 @@ private struct LeapSettingsView: View {
             }
             .navigationTitle(detailTitle)
             .toolbar {
-                if selectedSection == .plugins, selectedPlugin != nil {
+                if selectedSection == .plugins, pluginRoute != .list {
                     ToolbarItem(placement: .navigation) {
-                        Button { selectedPluginID = nil } label: {
+                        Button { pluginRoute = .list } label: {
                             Label("返回插件列表", systemImage: "chevron.left")
                         }
                         .labelStyle(.iconOnly)
@@ -96,9 +100,10 @@ private struct LeapSettingsView: View {
         }
         .onChange(of: coordinator.pluginInstallation.plugins) { _, plugins in
             // 在根视图处理失效详情，即使用户正浏览其他分类也不会保留已卸载插件。
-            guard let selectedPluginID, !plugins.contains(where: { $0.id == selectedPluginID }) else { return }
-            self.selectedPluginID = nil
-            Self.logger.debug("插件详情已失效，返回插件列表：\(selectedPluginID)。")
+            guard case let .details(pluginID) = pluginRoute,
+                !plugins.contains(where: { $0.id == pluginID }) else { return }
+            pluginRoute = .list
+            Self.logger.debug("插件详情已失效，返回插件列表：\(pluginID)。")
         }
     }
 }

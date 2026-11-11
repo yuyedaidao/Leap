@@ -4,9 +4,17 @@ import SwiftUI
 import UniformTypeIdentifiers
 import YQLogger
 
+/// 插件页内部的三种态共用一个详情列，商店与列表/详情互斥切换。
+enum PluginSettingsRoute: Equatable {
+    case list
+    case details(String)
+    case store
+}
+
 struct PluginSettingsPage: View {
     let installation: PluginInstallationModel
-    @Binding var selectedPluginID: String?
+    let store: PluginStoreModel
+    @Binding var route: PluginSettingsRoute
 
     @State private var isImporterPresented = false
     @State private var isSourceChoicePresented = false
@@ -15,24 +23,7 @@ struct PluginSettingsPage: View {
     @State private var pluginPendingUninstall: InstalledPluginDescriptor?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            PluginSettingsBrowser(
-                plugins: installation.plugins,
-                selectedPluginID: $selectedPluginID,
-                isEnabled: installation.isEnabled,
-                setEnabled: { plugin, enabled in installation.setEnabled(enabled, for: plugin) },
-                requestInstall: { presentSourceChoice() },
-                requestUpdate: { presentSourceChoice(updating: $0) },
-                requestUninstall: {
-                    pluginPendingUninstall = $0
-                    isUninstallConfirmationPresented = true
-                }
-            )
-            if let error = installation.errorMessage {
-                SettingsErrorMessage(error)
-            }
-        }
-        .padding(24)
+        content
         .confirmationDialog(
             sourceChoiceUpdateID == nil ? "安装插件" : "更新插件",
             isPresented: $isSourceChoicePresented,
@@ -67,6 +58,59 @@ struct PluginSettingsPage: View {
         )
     }
 
+    /// 商店页占满详情列并自带留白；列表与详情保持原有内边距。
+    @ViewBuilder
+    private var content: some View {
+        switch route {
+        case .store:
+            PluginStorePage(installation: installation, store: store, route: $route)
+        case .list:
+            listContent
+        case let .details(pluginID):
+            detailsContent(pluginID)
+        }
+    }
+
+    private var listContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            PluginSettingsBrowser(
+                plugins: installation.plugins,
+                route: $route,
+                isEnabled: installation.isEnabled,
+                setEnabled: { plugin, enabled in installation.setEnabled(enabled, for: plugin) },
+                requestInstall: { presentSourceChoice() },
+                requestUpdate: requestUpdate,
+                requestUninstall: {
+                    pluginPendingUninstall = $0
+                    isUninstallConfirmationPresented = true
+                }
+            )
+            if let error = installation.errorMessage {
+                SettingsErrorMessage(error)
+            }
+        }
+        .padding(24)
+    }
+
+    @ViewBuilder
+    private func detailsContent(_ pluginID: String) -> some View {
+        if let plugin = installation.plugins.first(where: { $0.id == pluginID }) {
+            PluginDetailsView(
+                plugin: plugin,
+                isEnabled: installation.isEnabled(plugin),
+                setEnabled: { installation.setEnabled($0, for: plugin) },
+                requestUpdate: { requestUpdate(plugin.id) },
+                requestUninstall: {
+                    pluginPendingUninstall = plugin
+                    isUninstallConfirmationPresented = true
+                }
+            )
+            .id(plugin.id)
+        } else {
+            ContentUnavailableView("插件已不可用", systemImage: "puzzlepiece.extension")
+        }
+    }
+
     private var installationConfirmationBinding: Binding<Bool> {
         Binding(
             get: { installation.isConfirmationPresented },
@@ -77,6 +121,19 @@ struct PluginSettingsPage: View {
     private var remotePresentationBinding: Binding<Bool> {
         @Bindable var installation = installation
         return $installation.isRemotePresented
+    }
+
+    /// 商店里登记过的插件一键更新；其余插件仍走本地/远程来源选择。
+    private func requestUpdate(_ pluginID: String) {
+        Task {
+            await store.loadIfNeeded()
+            guard let entry = store.entry(id: pluginID) else {
+                presentSourceChoice(updating: pluginID)
+                return
+            }
+            route = .store
+            installation.installFromStore(address: entry.installAddress(source: .official), pluginID: pluginID)
+        }
     }
 
     private func presentSourceChoice(updating pluginID: String? = nil) {
@@ -125,9 +182,13 @@ struct PluginSettingsPage: View {
         let shellWarning = candidate.manifest.runtime == .shell
             ? "\nShell 插件将通过 zsh 执行任意本地命令。"
             : ""
+        // 远程候选要能看到实际安装的来源目录与固定提交。
+        let sourceLine = candidate.source.map {
+            "\n来源：\($0.owner)/\($0.repository)/\($0.path)\n提交：\(String($0.commit.prefix(7)))"
+        } ?? ""
         return Text(
             "\(candidate.manifest.name) \(candidate.manifest.version)\n" +
-                "运行时：\(candidate.manifest.runtime.rawValue)\n命令：\(commands)" + shellWarning +
+                "运行时：\(candidate.manifest.runtime.rawValue)\n命令：\(commands)" + shellWarning + sourceLine +
                 (installation.replacementMessage.map { "\n" + $0 } ?? "")
         )
     }
@@ -152,7 +213,7 @@ struct PluginSettingsPage: View {
 /// 只保存插件 ID，更新后从最新目录取详情，避免把旧清单快照留在页面中。
 private struct PluginSettingsBrowser: View {
     let plugins: [InstalledPluginDescriptor]
-    @Binding var selectedPluginID: String?
+    @Binding var route: PluginSettingsRoute
     let isEnabled: (InstalledPluginDescriptor) -> Bool
     let setEnabled: (InstalledPluginDescriptor, Bool) -> Void
     let requestInstall: () -> Void
@@ -164,235 +225,39 @@ private struct PluginSettingsBrowser: View {
     private static let logger = YQLogger(label: "com.padding.leap/plugin-details")
 
     var body: some View {
-        if let plugin = plugins.first(where: { $0.id == selectedPluginID }) {
-            PluginDetailsView(
-                plugin: plugin,
-                isEnabled: isEnabled(plugin),
-                setEnabled: { setEnabled(plugin, $0) },
-                requestUpdate: { requestUpdate(plugin.id) },
-                requestUninstall: { requestUninstall(plugin) }
-            )
-            .id(plugin.id)
-        } else {
-            VStack(alignment: .leading, spacing: 16) {
-                PluginList(
-                    plugins: plugins,
-                    query: query,
-                    isEnabled: isEnabled,
-                    setEnabled: setEnabled,
-                    requestDetails: {
-                        selectedPluginID = $0
-                        Self.logger.debug("已打开插件详情：\($0)。")
-                    },
-                    requestUpdate: requestUpdate,
-                    requestUninstall: requestUninstall
-                )
-            }
-            .searchable(text: $query.searchText, placement: .toolbar, prompt: "搜索插件或命令")
-            .toolbar {
-                ToolbarItem(id: "plugin-source", placement: .principal) {
-                    PluginSourcePicker(source: $query.source)
-                        .frame(width: 220)
-                }
-                // 用系统弹性间隔分开居中的筛选与右侧操作区。
-                ToolbarSpacer(.flexible, placement: .principal)
-                ToolbarItem(id: "plugin-install", placement: .primaryAction) {
-                    Button("安装插件", systemImage: "plus", action: requestInstall)
-                        .labelStyle(.iconOnly)
-                        .help("安装插件")
-                        .accessibilityIdentifier("settings.installPluginButton")
-                }
-            }
-        }
-    }
-}
-
-private struct PluginSourcePicker: View {
-    @Binding var source: PluginLibraryQuery.Source
-
-    var body: some View {
-        Picker("插件来源", selection: $source) {
-            ForEach(PluginLibraryQuery.Source.allCases, id: \.self) { source in
-                Text(title(for: source))
-                    .tag(source)
-            }
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-        .accessibilityIdentifier("settings.pluginSource")
-    }
-
-    private func title(for source: PluginLibraryQuery.Source) -> String {
-        switch source {
-        case .all: "全部"
-        case .local: "自定义"
-        case .official: "内置"
-        }
-    }
-}
-
-private struct PluginList: View {
-    let plugins: [InstalledPluginDescriptor]
-    let query: PluginLibraryQuery
-    let isEnabled: (InstalledPluginDescriptor) -> Bool
-    let setEnabled: (InstalledPluginDescriptor, Bool) -> Void
-    let requestDetails: (String) -> Void
-    let requestUpdate: (String) -> Void
-    let requestUninstall: (InstalledPluginDescriptor) -> Void
-
-    var body: some View {
-        let visible = plugins.filter(query.includes)
-        let local = visible.filter { $0.origin == .local }
-        let official = visible.filter { $0.origin == .official }
-        if visible.isEmpty {
-            ContentUnavailableView(
-                query.term.isEmpty ? "暂无此类插件" : "没有匹配的插件",
-                systemImage: query.term.isEmpty ? "puzzlepiece.extension" : "magnifyingglass",
-                description: Text(query.term.isEmpty ? "可安装本地插件，或切换来源查看其他插件。" : "尝试其他关键词或切换插件来源。")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityIdentifier("settings.pluginEmptyState")
-        } else {
-            List {
-                if !local.isEmpty {
-                    Section {
-                        ForEach(local) { plugin in
-                            row(plugin)
-                        }
-                    } header: {
-                        Text("自定义 · \(local.count)")
-                            .accessibilityIdentifier("settings.pluginGroup.local")
-                    }
-                }
-                if !official.isEmpty {
-                    Section {
-                        ForEach(official) { plugin in
-                            row(plugin)
-                        }
-                    } header: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("内置 · \(official.count)")
-                                .accessibilityIdentifier("settings.pluginGroup.official")
-                            Text("随 Leap 提供，随应用更新")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .listStyle(.plain)
-        }
-    }
-
-    private func row(_ plugin: InstalledPluginDescriptor) -> some View {
-        PluginRow(
-            plugin: plugin,
-            matchingCommands: query.matchingCommands(in: plugin).map(\.title),
-            isEnabled: isEnabled(plugin),
-            setEnabled: { setEnabled(plugin, $0) },
-            requestDetails: { requestDetails(plugin.id) },
-            requestUpdate: { requestUpdate(plugin.id) },
+        PluginList(
+            plugins: plugins,
+            query: query,
+            isEnabled: isEnabled,
+            setEnabled: setEnabled,
+            requestDetails: {
+                route = .details($0)
+                Self.logger.debug("已打开插件详情：\($0)。")
+            },
+            requestUpdate: requestUpdate,
             requestUninstall: requestUninstall
         )
-    }
-}
-
-private struct PluginRow: View {
-    let plugin: InstalledPluginDescriptor
-    let matchingCommands: [String]
-    let isEnabled: Bool
-    let setEnabled: (Bool) -> Void
-    let requestDetails: () -> Void
-    let requestUpdate: () -> Void
-    let requestUninstall: (InstalledPluginDescriptor) -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Button(action: requestDetails) {
-                HStack(spacing: 12) {
-                    PluginIcon(plugin: plugin)
-                        .frame(width: 32, height: 32)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(plugin.manifest.name)
-                        Text(
-                            "\(plugin.manifest.version) · \(plugin.manifest.commands.count) 个命令" +
-                                (isEnabled ? "" : " · 已禁用")
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        if !matchingCommands.isEmpty {
-                            Text("匹配命令：\(matchingCommands.joined(separator: "、"))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .help(matchingCommands.joined(separator: "、"))
-                                .accessibilityIdentifier("settings.pluginMatch.\(plugin.id)")
-                        }
-                    }
-                    .lineLimit(1)
-                    Spacer()
-                }
-                .contentShape(Rectangle())
+        .searchable(text: $query.searchText, placement: .toolbar, prompt: "搜索插件或命令")
+        .toolbar {
+            ToolbarItem(id: "plugin-source", placement: .principal) {
+                PluginSourcePicker(source: $query.source)
+                    .frame(width: 220)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(
-                matchingCommands.isEmpty
-                    ? "查看 \(plugin.manifest.name) 详情"
-                    : "查看 \(plugin.manifest.name) 详情，匹配命令：\(matchingCommands.joined(separator: "、"))"
-            )
-            .accessibilityIdentifier("settings.pluginDetails.\(plugin.id)")
-            Toggle("启用", isOn: Binding(get: { isEnabled }, set: setEnabled))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .help(isEnabled ? "禁用 \(plugin.manifest.name)" : "启用 \(plugin.manifest.name)")
-                .accessibilityLabel("启用 \(plugin.manifest.name)")
-                .accessibilityIdentifier("settings.pluginEnabled.\(plugin.id)")
-            if plugin.origin == .local {
-                Menu {
-                    Button("更新", action: requestUpdate)
-                    Button("卸载", role: .destructive) { requestUninstall(plugin) }
-                } label: {
-                    Label("管理插件", systemImage: "ellipsis")
-                        .labelStyle(.iconOnly)
-                }
-                // 保留系统按钮的边框与点击范围，避免菜单热区缩成省略号图标。
-                .menuStyle(.button)
-                .menuIndicator(.hidden)
-                .controlSize(.regular)
-                .help("管理插件")
-                .accessibilityLabel("管理 \(plugin.manifest.name)")
-                .accessibilityIdentifier("settings.pluginMenu.\(plugin.id)")
+            // 用系统弹性间隔分开居中的筛选与右侧操作区。
+            ToolbarSpacer(.flexible, placement: .principal)
+            ToolbarItem(id: "plugin-install", placement: .primaryAction) {
+                Button("安装插件", systemImage: "plus", action: requestInstall)
+                    .labelStyle(.iconOnly)
+                    .help("安装插件")
+                    .accessibilityIdentifier("settings.installPluginButton")
             }
-            Image(systemName: "chevron.right")
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-        }
-    }
-}
-
-struct PluginIcon: View {
-    let plugin: InstalledPluginDescriptor
-
-    var body: some View {
-        if let iconURL = plugin.iconURL, let image = NSImage(contentsOf: iconURL) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        } else {
-            Image(systemName: iconName)
-                .foregroundStyle(.tint)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-        }
-    }
-
-    private var iconName: String {
-        switch plugin.manifest.runtime {
-        case .python: "chevron.left.forwardslash.chevron.right"
-        case .javascript: "curlybraces"
-        case .shell: "terminal"
+            // 商店入口紧贴系统搜索框，与安装按钮同属右侧操作区。
+            ToolbarItem(id: "plugin-store", placement: .primaryAction) {
+                Button("插件商店", systemImage: "storefront") { route = .store }
+                    .labelStyle(.iconOnly)
+                    .help("插件商店")
+                    .accessibilityIdentifier("settings.pluginStoreButton")
+            }
         }
     }
 }

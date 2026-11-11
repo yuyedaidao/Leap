@@ -64,7 +64,7 @@ let project = Project(
             // 协调模型直接参与单测编译；更新器注入替身，不启动真实下载安装。
             sources: [
                 "Tests/LeapTests/**", "Sources/Leap/PluginInstallationModel.swift",
-                "Sources/Leap/AppUpdateController.swift"
+                "Sources/Leap/PluginStoreModel.swift", "Sources/Leap/AppUpdateController.swift"
             ],
             dependencies: [.target(name: "LeapCore"), .external(name: "Sparkle"), .external(name: "YQLogger")],
             settings: .settings(base: [

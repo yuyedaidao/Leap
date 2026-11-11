@@ -62,6 +62,7 @@ final class SettingsCoordinator {
     private let applyShortcut: (HotKeyShortcut) throws -> Void
 
     let pluginInstallation: PluginInstallationModel
+    let pluginStore: PluginStoreModel
     private(set) var shortcut: HotKeyShortcut
     private(set) var shortcutError: String?
     private(set) var loginItemState: LoginItemState
@@ -83,6 +84,11 @@ final class SettingsCoordinator {
         pluginInstallation = PluginInstallationModel(paths: paths) { [weak launcher] in
             launcher?.reloadPlugins()
         }
+        // UI 测试要求商店只读缓存，避免用例依赖真实网络。
+        pluginStore = PluginStoreModel(
+            paths: paths,
+            allowsRefresh: !ProcessInfo.processInfo.arguments.contains("-leap-testing-offline-store")
+        )
     }
 
     func updateShortcut(_ shortcut: HotKeyShortcut) {

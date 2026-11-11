@@ -3,18 +3,19 @@ import LeapCore
 import Observation
 import YQLogger
 
+/// 定向更新时防止把另一个插件的候选装进目标 ID。
+private struct UpdateTargetMismatch: LocalizedError {
+    let expectedID: String
+    let actualID: String
+
+    var errorDescription: String? {
+        "所选插件的 ID（\(actualID)）与要更新的插件（\(expectedID)）不一致。请选择该插件的目录。"
+    }
+}
+
 @MainActor
 @Observable
 final class PluginInstallationModel {
-    private struct UpdateTargetMismatch: LocalizedError {
-        let expectedID: String
-        let actualID: String
-
-        var errorDescription: String? {
-            "所选插件的 ID（\(actualID)）与要更新的插件（\(expectedID)）不一致。请选择该插件的目录。"
-        }
-    }
-
     private static let logger = YQLogger(label: "com.padding.leap/plugin-installation-ui")
 
     private let installer: PluginInstaller
@@ -155,6 +156,14 @@ final class PluginInstallationModel {
         }
         errorMessage = nil
         isRemotePresented = true
+    }
+
+    /// 商店安装不需要地址表单，直接按索引目录下载；已安装同 ID 时按定向更新校验。
+    func installFromStore(address: String, pluginID: String) {
+        guard !isPreparing, !isInstalling, candidate == nil else { return }
+        updateTargetID = plugins.contains { $0.id == pluginID } ? pluginID : nil
+        errorMessage = nil
+        downloadRemote(address: address)
     }
 
     func downloadRemote(address: String) {
