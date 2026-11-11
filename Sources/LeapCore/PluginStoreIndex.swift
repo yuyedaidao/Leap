@@ -5,10 +5,12 @@ public enum PluginStoreError: LocalizedError, Equatable {
     case invalidIndex
     case unsupportedSchema
     case noCache
+    case notFound
 
     public var errorDescription: String? {
         switch self {
         case .invalidIndex: "插件商店索引不可用，请稍后重试。"
+        case .notFound: "无法获取插件商店索引，请检查商店仓库是否公开或索引文件是否存在。"
         case .unsupportedSchema: "插件商店索引版本不受支持，请更新 Leap。"
         case .noCache: "尚未获取过插件商店索引。"
         }

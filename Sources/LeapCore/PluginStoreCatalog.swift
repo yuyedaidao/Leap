@@ -42,7 +42,10 @@ public struct PluginStoreCatalog: Sendable {
     public func refresh() async throws -> PluginStoreSnapshot {
         let response = try await client.download(source.indexURL, maximumBytes: PluginStoreIndex.maximumIndexBytes)
         defer { try? FileManager.default.removeItem(at: response.file) }
-        try RemotePluginDownloader.validate(response)
+        // 索引 404 与应用商店语义无关，换成商店自己的提示，避免误以为是插件目录地址有问题。
+        do { try RemotePluginDownloader.validate(response) } catch RemotePluginError.notFound {
+            throw PluginStoreError.notFound
+        }
         let data = try Data(contentsOf: response.file)
         let index = try PluginStoreIndex.decode(data)
         do {

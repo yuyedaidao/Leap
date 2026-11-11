@@ -93,6 +93,15 @@ struct PluginStoreCatalogTests {
         }
     }
 
+    @Test("索引缺失时报商店错误，不暴露插件地址错误")
+    func missingIndex() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let mock = GitHubFixtureClient(replies: [indexURL: .init(data: Data(), status: 404)])
+        let catalog = PluginStoreCatalog(client: mock, cacheURL: root.appendingPathComponent("store.json"))
+        await #expect(throws: PluginStoreError.notFound) { try await catalog.refresh() }
+    }
+
     @Test("损坏的缓存视为没有缓存")
     func damagedCache() throws {
         let root = try makeRoot()
