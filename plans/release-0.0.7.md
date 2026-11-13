@@ -27,11 +27,11 @@
 
 ## Steps
 
-- [ ] 切换到 `main`（当前 `develop` 与 `main`、`origin/main` 同一提交 `7ba88c3`，无分叉）
-- [ ] 按主题提交：`fix(launcher): 修复最近使用记录在启动时被误删`（三处源码+测试）、`docs: 增加 0.0.7 发版计划`
-- [ ] 升版本：`Project.swift` 两行改为 0.0.7 / 7，提交 `chore: 发布 Leap 0.0.7`
-- [ ] `git push origin main`
-- [ ] 写更新说明 `/tmp/notes-0.0.7.md`（3 条用户可感知变化）：
+- [x] 切换到 `main`（当前 `develop` 与 `main`、`origin/main` 同一提交 `7ba88c3`，无分叉）
+- [x] 按主题提交：`fix(launcher): 修复最近使用记录在启动时被误删`（三处源码+测试）、`docs: 增加 0.0.7 发版计划`
+- [x] 升版本：`Project.swift` 两行改为 0.0.7 / 7，提交 `chore: 发布 Leap 0.0.7`
+- [x] `git push origin main`
+- [x] 写更新说明 `/tmp/notes-0.0.7.md`（3 条用户可感知变化）：
   - 修复「最近使用」在每次重启后丢失插件记录的问题
   - 最近使用不再因为系统应用索引与插件加载先后顺序被清空
   - 输入搜索词时不再反复读写最近使用记录
