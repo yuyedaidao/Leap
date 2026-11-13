@@ -80,21 +80,28 @@ public final class LauncherUsageStore {
         self.maximumCount = maximumCount
     }
 
-    public func load(validKeys: Set<LauncherUsageKey>) -> [LauncherUsageRecord] {
-        let records = storedRecords()
-        let current = records.filter { validKeys.contains($0.key) }
-        if current != records { save(current) }
-        return current
+    /// 只读取全部记录，不做有效性过滤。插件目录与系统应用索引的加载有先后顺序，
+    /// 若在这里按“当前已知的键”过滤，尚未加载完成的一侧会被当成已卸载并永久删除。
+    public func load() -> [LauncherUsageRecord] {
+        storedRecords()
     }
 
-    public func record(_ key: LauncherUsageKey, validKeys: Set<LauncherUsageKey>) {
-        let previous = load(validKeys: validKeys).first(where: { $0.key == key })
+    public func record(_ key: LauncherUsageKey) {
+        let records = storedRecords()
+        let previous = records.first { $0.key == key }
         let record = LauncherUsageRecord(
             key: key,
             lastUsed: .now,
             launchCount: (previous?.launchCount ?? 0) + 1
         )
-        save(Array(([record] + load(validKeys: validKeys).filter { $0.key != key }).prefix(maximumCount)))
+        save(Array(([record] + records.filter { $0.key != key }).prefix(maximumCount)))
+    }
+
+    /// 仅在插件目录与应用索引都已就绪后调用，用来清理真正失效的记录（卸载插件、删除应用）。
+    public func prune(keeping validKeys: Set<LauncherUsageKey>) {
+        let records = storedRecords()
+        let current = records.filter { validKeys.contains($0.key) }
+        if current != records { save(current) }
     }
 
     /// 同时清除旧键，避免下次读取时将历史记录重新迁移回来。

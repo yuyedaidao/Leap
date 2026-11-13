@@ -94,6 +94,9 @@ final class LauncherModel {
     private var pendingPluginRun: (command: PluginCommandDescriptor, query: String)?
     private var foregroundShellTask: ShellScriptTask?
     private var commandMatchers: [String: PluginCommandMatcher] = [:]
+    /// 最近使用记录的清理必须等两侧目录都就绪，否则会把尚未加载的条目当成已卸载。
+    private var didLoadCommands = false
+    private var didLoadApplications = false
 
     var query = ""
     var selectedSearchResultID: LauncherItem.ID?
@@ -150,6 +153,8 @@ final class LauncherModel {
         applicationIndexCacheURL = nil
         self.applicationLauncher = applicationLauncher
         applications = fixtureApplications
+        // 夹具同时提供两侧目录，可直接参与记录清理。
+        didLoadApplications = true
     }
 
     var searchResults: [LauncherItem] {
@@ -157,7 +162,7 @@ final class LauncherModel {
         guard !normalizedQuery.isEmpty else {
             return []
         }
-        let usage = Dictionary(uniqueKeysWithValues: recentStore.load(validKeys: validUsageKeys).map { ($0.key, $0) })
+        let usage = Dictionary(recentStore.load().map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
         let applicationMatches = applications.compactMap { application in
             application.matchRank(for: normalizedQuery).map { (LauncherItem.application(application), $0) }
         }
@@ -178,12 +183,14 @@ final class LauncherModel {
 
     func reloadPlugins() {
         commands = fixtureCommands ?? catalog?.load() ?? []
+        didLoadCommands = true
         commandMatchers = Dictionary(uniqueKeysWithValues: commands.map { command in
             (command.id, PluginCommandMatcher(command: configuration(for: command), pluginName: command.pluginName))
         })
         if let interaction, !commands.contains(where: { $0 == interaction.command }) { exitInteraction() }
         if let fixtureApplications { applications = fixtureApplications }
         rebuildRecentItems()
+        pruneUsageRecords()
     }
 
     var canRebuildApplicationIndex: Bool {
@@ -223,7 +230,9 @@ final class LauncherModel {
             let cached = await Task.detached { SystemApplicationIndexCache.load(from: applicationIndexCacheURL) }.value
             guard let self, let cached else { return }
             self.applications = cached
+            self.didLoadApplications = true
             self.rebuildRecentItems()
+            self.pruneUsageRecords()
         }
         refreshApplications()
     }
@@ -364,9 +373,10 @@ final class LauncherModel {
     }
 
     private func recordRecent(_ command: PluginCommandDescriptor) {
-        recentStore.record(.plugin(RecentCommandKey(pluginID: command.pluginID, commandID: command.commandID)), validKeys: validUsageKeys)
+        recentStore.record(.plugin(RecentCommandKey(pluginID: command.pluginID, commandID: command.commandID)))
         rebuildRecentItems()
     }
+
 
     private func activate(_ application: SystemApplicationDescriptor) {
         invocationState = .running(application.name)
@@ -375,7 +385,7 @@ final class LauncherModel {
             do {
                 try await applicationLauncher(application.url)
                 guard !Task.isCancelled else { return }
-                recentStore.record(.application(path: application.historyKey), validKeys: validUsageKeys)
+                recentStore.record(.application(path: application.historyKey))
                 rebuildRecentItems()
                 applicationDidLaunch?()
             } catch {
@@ -394,7 +404,9 @@ final class LauncherModel {
             let indexed = await Task.detached { applicationScanner.scan() }.value
             guard let self else { return }
             applications = indexed
+            didLoadApplications = true
             rebuildRecentItems()
+            pruneUsageRecords()
             do {
                 try SystemApplicationIndexCache.save(indexed, to: applicationIndexCacheURL)
                 completion(.success(()))
@@ -408,11 +420,6 @@ final class LauncherModel {
     private var validUsageKeys: Set<LauncherUsageKey> {
         Set(applications.map { .application(path: $0.historyKey) })
             .union(commands.map { .plugin(RecentCommandKey(pluginID: $0.pluginID, commandID: $0.commandID)) })
-    }
-
-    private func rebuildRecentItems() {
-        let items = Dictionary(uniqueKeysWithValues: (applications.map(LauncherItem.application) + commands.map(LauncherItem.plugin)).map { ($0.usageKey, $0) })
-        recentItems = recentStore.load(validKeys: Set(items.keys)).compactMap { items[$0.key] }
     }
 
     private func pluginMatchRank(_ command: PluginCommandDescriptor, query: String) -> Int? {
@@ -430,6 +437,28 @@ final class LauncherModel {
 }
 
 // 动作插件会话与 Shell 执行分别组织，生命周期仍由 LauncherModel 协调。
+
+/// 最近使用列表只做展示过滤，清理必须等两侧目录都就绪后再执行。
+extension LauncherModel {
+    func rebuildRecentItems() {
+        var items: [LauncherUsageKey: LauncherItem] = [:]
+        for item in applications.map(LauncherItem.application) + commands.map(LauncherItem.plugin) {
+            items[item.usageKey] = item
+        }
+        // 记录里可能残留尚未清理到位的条目，展示时直接跳过，但不在读取阶段删除。
+        var seen = Set<LauncherUsageKey>()
+        recentItems = recentStore.load().compactMap { record in
+            guard seen.insert(record.key).inserted else { return nil }
+            return items[record.key]
+        }
+    }
+
+    func pruneUsageRecords() {
+        guard didLoadCommands, didLoadApplications else { return }
+        recentStore.prune(keeping: validUsageKeys)
+        rebuildRecentItems()
+    }
+}
 extension LauncherModel {
     private func run(_ command: PluginCommandDescriptor, query: String) async -> InvocationResponse {
         await run(command, commandID: command.commandID, query: query)

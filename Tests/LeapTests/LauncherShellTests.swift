@@ -292,7 +292,7 @@ struct LauncherShellTests {
         #expect(application?.matchRank(for: "WeChat") == 0)
     }
 
-    @Test("统一使用记录迁移旧插件历史并移除失效项目")
+    @Test("统一使用记录迁移旧插件历史，清理只在显式调用时发生")
     func launcherUsageStoreMigratesAndFiltersHistory() throws {
         let suiteName = "LeapTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -300,13 +300,18 @@ struct LauncherShellTests {
         let command = RecentCommandKey(pluginID: "com.example.echo", commandID: "echo")
         defaults.set(try JSONEncoder().encode([command]), forKey: "legacy")
         let key = LauncherUsageKey.plugin(command)
+        let applicationKey = LauncherUsageKey.application(path: "/Applications/Calculator.app")
         let store = LauncherUsageStore(defaults: defaults, key: "usage", legacyKey: "legacy", maximumCount: 2)
 
-        #expect(store.load(validKeys: [key]).map(\.key) == [key])
-        store.record(.application(path: "/Applications/Calculator.app"), validKeys: [key, .application(path: "/Applications/Calculator.app")])
-        #expect(store.load(validKeys: [.application(path: "/Applications/Calculator.app")]).map(\.key) == [.application(path: "/Applications/Calculator.app")])
+        #expect(store.load().map(\.key) == [key])
+        store.record(applicationKey)
+        // 插件目录与应用索引加载有先后，读取与记录都不能把另一侧尚未加载的记录当作已卸载。
+        #expect(store.load().map(\.key) == [applicationKey, key])
+
+        store.prune(keeping: [applicationKey])
+        #expect(store.load().map(\.key) == [applicationKey])
         store.clear()
-        #expect(store.load(validKeys: [.application(path: "/Applications/Calculator.app")]).isEmpty)
+        #expect(store.load().isEmpty)
     }
 
     @Test("卸载受管插件会删除副本和信任记录")
