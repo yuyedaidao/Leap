@@ -37,7 +37,7 @@
   - 输入搜索词时不再反复读写最近使用记录
 - [x] `./Scripts/publish-release.py --notes-file /tmp/notes-0.0.7.md`（后台跑，约 10 分钟，日志 `build/releases/run-<id>/build.log`）
 - [x] 更新 Tap：`Casks/leap.rb` 的 `version` 改 `0.0.7`、`sha256` 取本轮 `SHA256SUMS.txt`，提交信息 `leap 0.0.7`，push
-- [ ] 汇总报告：Release 链接、DMG SHA256、Tap 提交号
+- [x] 汇总报告：Release 链接、DMG SHA256、Tap 提交号
 
 ## Verification
 
