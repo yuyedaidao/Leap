@@ -164,6 +164,15 @@ public final class PluginProcessSession: @unchecked Sendable {
 
     public var processIdentifier: Int32 { process.processIdentifier }
 
+    /// 单向推送：不登记 pending，也不等待回执；脚本侧不会回帧。
+    public func notify(_ name: String, payload: PluginValue = .null) {
+        queue.async { [self] in
+            guard ready, !closed, !shuttingDown else { return }
+            send(PluginMessage(type: "event", id: sessionID + "/notify-" + UUID().uuidString, method: "notify",
+                               params: .object(["name": .string(name), "payload": payload])))
+        }
+    }
+
     public func close(commandID: String = "", query: String = "") {
         queue.async { [self] in
             guard !closed, !shuttingDown else { return }

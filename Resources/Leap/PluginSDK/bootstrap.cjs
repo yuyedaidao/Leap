@@ -17,6 +17,7 @@ for (const key of ['log', 'info', 'warn', 'error', 'debug']) {
 }
 const listeners = { enter: new Set(), exit: new Set() };
 const handlers = new Map();
+const hostEvents = new Map();
 const tasks = new Map();
 const calls = new Map();
 let active = true;
@@ -36,6 +37,16 @@ function subscribe(event, callback) {
   if (handlers.has(event)) throw new Error(`${event} 只能注册一个处理器。`);
   handlers.set(event, callback);
   return () => { if (handlers.get(event) === callback) handlers.delete(event); };
+}
+
+// 宿主推送（如剪切板新增）只传递数据，不需要插件回执。
+function onHostEvent(name, callback) {
+  if (typeof name !== 'string' || !name || typeof callback !== 'function') {
+    throw new TypeError('宿主事件名称与处理器必须合法。');
+  }
+  if (!hostEvents.has(name)) hostEvents.set(name, new Set());
+  hostEvents.get(name).add(callback);
+  return () => { hostEvents.get(name)?.delete(callback); };
 }
 
 function hostCall(method, params = {}) {
@@ -83,7 +94,8 @@ globalThis.leap = Object.freeze({
   onSelect: callback => subscribe('select', callback),
   onInvoke: callback => subscribe('invoke', callback),
   onExit: callback => subscribe('exit', callback),
-  ...require('./host-api.js')(hostCall),
+  onHostEvent,
+  ...require('./host-api.js')(hostCall, onHostEvent),
   outPlugin: () => hostCall('outPlugin'),
   hideMainWindow: () => hostCall('hideMainWindow'),
   log: (...values) => console.log(...values),
@@ -98,6 +110,20 @@ async function event(message) {
     let live = true;
     try {
       if (!active && method !== 'exit') throw new Error('插件会话已退出。');
+      // 推送无回执，宿主不等待结果帧；处理器抛异常也不能回帧，否则宿主会判定协议错误并关会话。
+      if (method === 'notify') {
+        const callbacks = hostEvents.get(params?.name);
+        if (active && callbacks) {
+          for (const callback of [...callbacks]) {
+            try {
+              await callback(params?.payload ?? null);
+            } catch (error) {
+              console.error('推送处理失败：', error);
+            }
+          }
+        }
+        return;
+      }
       if (typeof params?.commandID !== 'string' || typeof params.query !== 'string') {
         throw new Error('事件参数无效。');
       }
@@ -158,6 +184,7 @@ async function event(message) {
       tasks.delete(id);
       if (method === 'exit') {
         for (const callbacks of Object.values(listeners)) callbacks.clear();
+        for (const callbacks of hostEvents.values()) callbacks.clear();
         handlers.clear();
       }
     }

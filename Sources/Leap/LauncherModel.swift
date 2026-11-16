@@ -77,6 +77,8 @@ final class LauncherModel {
     let pluginPaths: AppPaths?
     let hostAPI: PluginHostAPI?
     private let clipboardMonitor: ClipboardHistoryMonitor?
+    private let clipboardHistory: ClipboardHistoryStore?
+    private let sessionPool: PluginSessionPool?
     var externalTargetPID: Int32?
     var inputWindowVisibility: ((Bool) -> Void)?
     private let recentStore: LauncherUsageStore
@@ -120,10 +122,10 @@ final class LauncherModel {
         pluginPaths = paths
         let hostAPI = PluginHostAPI(paths: paths)
         self.hostAPI = hostAPI
-        let monitor = try? ClipboardHistoryMonitor(paths: paths, documentStores: hostAPI.documentStores)
-        clipboardMonitor = monitor
-        hostAPI.onClipboardWrite = { [weak monitor] in monitor?.suppressNextCapture() }
-        monitor?.start()
+        let wiring = Self.makeClipboardWiring(paths: paths, hostAPI: hostAPI)
+        clipboardHistory = wiring.store
+        clipboardMonitor = wiring.monitor
+        sessionPool = PluginSessionPool()
         recentStore = LauncherUsageStore()
         scriptExecutor = PluginScriptExecutor(runtimeLocator: BundledRuntimeLocator(paths: paths))
         shellExecutor = ShellScriptExecutor()
@@ -132,6 +134,7 @@ final class LauncherModel {
         applicationScanner = SystemApplicationScanner()
         applicationIndexCacheURL = paths.applicationIndexCacheURL
         applicationLauncher = Self.launchSystemApplication
+        wireClipboardAppend(to: wiring.store)
     }
 
     init(
@@ -144,6 +147,8 @@ final class LauncherModel {
         pluginPaths = paths
         hostAPI = paths.map { PluginHostAPI(paths: $0) }
         clipboardMonitor = nil
+        clipboardHistory = nil
+        sessionPool = nil
         recentStore = LauncherUsageStore(defaults: .standard, key: "uiTestingLauncherUsageRecords")
         scriptExecutor = nil
         shellExecutor = nil
@@ -191,10 +196,7 @@ final class LauncherModel {
         if let fixtureApplications { applications = fixtureApplications }
         rebuildRecentItems()
         pruneUsageRecords()
-    }
-
-    var canRebuildApplicationIndex: Bool {
-        applicationScanner != nil && applicationIndexCacheURL != nil
+        prewarmClipboardSession()
     }
 
     func clearRecentItems() {
@@ -281,7 +283,8 @@ final class LauncherModel {
             interaction = PluginInteractionSession(
                 command: command, configuration: configuration,
                 previousSearch: query, initialInput: initialInput, executor: scriptExecutor,
-                hostAPI: hostAPI, targetPID: externalTargetPID, inputWindowVisibility: inputWindowVisibility
+                hostAPI: hostAPI, targetPID: externalTargetPID, inputWindowVisibility: inputWindowVisibility,
+                pool: sessionPool
             )
             interaction?.hostAction = { [weak self] method in
                 if method == "outPlugin" { self?.exitInteraction() }
@@ -359,7 +362,8 @@ final class LauncherModel {
 
     func exitInteraction() {
         guard let interaction else { return }
-        interaction.close()
+        // 保留脚本进程一小段时间，下次打开省掉 Node 冷启。
+        interaction.suspend()
         query = interaction.previousSearch
         self.interaction = nil
         invocationState = .idle
@@ -659,5 +663,54 @@ extension LauncherModel {
         let prefix = "…输出已截断，以下为最新内容：\n"
         let suffix = output.utf8.suffix(limit - prefix.utf8.count)
         return prefix + String(decoding: suffix, as: UTF8.self)
+    }
+}
+
+/// 剪切板历史的宿主侧组装：主模型只持有实例，具体接线放在扩展里，避免类体继续膨胀。
+@MainActor
+extension LauncherModel {
+    private struct ClipboardWiring {
+        let store: ClipboardHistoryStore
+        let monitor: ClipboardHistoryMonitor
+    }
+
+    /// 建立分组日志存储并启动轮询；旧文档库在首次启动时迁移过来。
+    private static func makeClipboardWiring(paths: AppPaths, hostAPI: PluginHostAPI) -> ClipboardWiring {
+        let store = ClipboardHistoryStore(directory: paths.clipboardDataDirectory)
+        store.migrateLegacyHistory(legacyDirectory: paths.clipboardHistoryDirectory,
+                                   documentStores: hostAPI.documentStores)
+        hostAPI.clipboardHistory = store
+        let monitor = ClipboardHistoryMonitor(store: store)
+        hostAPI.onClipboardWrite = { [weak monitor] in monitor?.suppressNextCapture() }
+        monitor.start()
+        return ClipboardWiring(store: store, monitor: monitor)
+    }
+
+    /// 新记录直接推给正在交互的剪切板插件，列表不必重新请求宿主。
+    private func wireClipboardAppend(to store: ClipboardHistoryStore) {
+        store.onAppend = { [weak self] record in
+            guard let self, let interaction,
+                  interaction.command.pluginID == AppPaths.clipboardPluginID else { return }
+            interaction.notify("clipboard.append", payload: record.pluginValue)
+            interaction.reloadList()
+        }
+    }
+
+    /// 启动后在空闲时预热剪切板会话，把首次打开的冷启代价移出交互路径。
+    private func prewarmClipboardSession() {
+        guard let sessionPool, let scriptExecutor, interaction == nil,
+              let command = commands.first(where: { $0.pluginID == AppPaths.clipboardPluginID }) else { return }
+        let key = PluginSessionPool.Key(pluginID: command.pluginID, commandID: command.commandID)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            // 用户已经先一步打开时不再重复创建会话。
+            guard let self, self.interaction == nil else { return }
+            sessionPool.prewarm(key, executor: scriptExecutor, manifest: command.manifest,
+                                pluginDirectory: command.pluginDirectory)
+        }
+    }
+
+    var canRebuildApplicationIndex: Bool {
+        applicationScanner != nil && applicationIndexCacheURL != nil
     }
 }

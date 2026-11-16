@@ -72,6 +72,11 @@ public struct AppPaths: Sendable {
         applicationSupportDirectory.appendingPathComponent("ClipboardHistory", isDirectory: true)
     }
 
+    /// 分组追加日志：`<组>/data` 每行一条记录，图片与组同目录。
+    public var clipboardDataDirectory: URL {
+        applicationSupportDirectory.appendingPathComponent("clipboard-data", isDirectory: true)
+    }
+
     public var trustRecordsDirectory: URL {
         applicationSupportDirectory.appendingPathComponent("Trust", isDirectory: true)
     }

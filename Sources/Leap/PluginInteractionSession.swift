@@ -16,6 +16,9 @@ final class PluginInteractionSession: Identifiable {
     private let hostAPI: PluginHostAPI?
     private let targetPID: Int32?
     private let inputWindowVisibility: ((Bool) -> Void)?
+    private let pool: PluginSessionPool?
+    private let poolKey: PluginSessionPool.Key?
+    private var pooled: PluginSessionPool.Session?
     private var webHostTasks: [String: Task<PluginValue, any Error>] = [:]
 
     private var startupError: String?
@@ -35,7 +38,8 @@ final class PluginInteractionSession: Identifiable {
     init(
         command: PluginCommandDescriptor, configuration: PluginManifest.Command,
         previousSearch: String, initialInput: String, executor: PluginScriptExecutor?,
-        hostAPI: PluginHostAPI? = nil, targetPID: Int32? = nil, inputWindowVisibility: ((Bool) -> Void)? = nil
+        hostAPI: PluginHostAPI? = nil, targetPID: Int32? = nil, inputWindowVisibility: ((Bool) -> Void)? = nil,
+        pool: PluginSessionPool? = nil
     ) {
         self.hostAPI = hostAPI
         self.targetPID = targetPID
@@ -43,25 +47,17 @@ final class PluginInteractionSession: Identifiable {
         self.command = command
         self.configuration = configuration
         self.previousSearch = previousSearch
+        self.pool = pool
+        poolKey = pool.map { _ in PluginSessionPool.Key(pluginID: command.pluginID, commandID: command.commandID) }
         inputText = initialInput
         committedInput = initialInput
         do {
-            guard let executor else { throw SessionError.runtimeUnavailable }
-            let script = try executor.makeSession(
-                manifest: command.manifest, pluginDirectory: command.pluginDirectory,
-                commandID: command.commandID, query: initialInput,
-                hostCall: { [weak self] method, params in
-                    guard let self else { throw PluginSessionError.closed }
-                    return try await self.handleHostCall(method, params: params)
-                }, onHostReply: { [weak self] method in
-                    Task { @MainActor in
-                        guard let self, self.isActive else { return }
-                        self.didReplyHostCall(method)
-                    }
-                }
-            )
-            self.script = script
-            let coordinator = PluginListSession { [weak self] method, query, itemID, cancellation, update in
+            let source = try resolveScript(executor: executor, initialInput: initialInput)
+            script = source.script
+            let scriptSession = source.script
+            pooled = source.pooled
+            pooled?.router.session = self
+            let call: PluginListSession.Call = { [weak self] method, query, itemID, cancellation, update in
                 let owner = self
                 let loading: PluginProcessSession.LoadingUpdate?
                 if configuration.presentation == .list {
@@ -71,14 +67,51 @@ final class PluginInteractionSession: Identifiable {
                         }
                     }
                 } else { loading = nil }
-                return try await script.call(method, query: query, itemID: itemID,
-                                             cancellation: cancellation, onList: update, onLoading: loading)
+                return try await scriptSession.call(method, query: query, itemID: itemID,
+                                                    cancellation: cancellation, onList: update, onLoading: loading)
             }
+            let snapshot = source.snapshot ?? PluginListSnapshot(items: [])
+            let coordinator = PluginListSession(initialSnapshot: snapshot, call: call)
             inputCoordinator = coordinator
             if configuration.presentation == .list { list = coordinator }
             coordinator.updateInput(initialInput)
         } catch { startupError = error.localizedDescription }
 
+    }
+
+    private struct Source {
+        let script: PluginScriptSession
+        let pooled: PluginSessionPool.Session?
+        let snapshot: PluginListSnapshot?
+    }
+
+    /// 优先复用池内会话，其次新建；池内会话还带回它上次的列表快照。
+    private func resolveScript(executor: PluginScriptExecutor?, initialInput: String) throws -> Source {
+        if let pool, let poolKey, let borrowed = pool.borrow(poolKey) {
+            return Source(script: borrowed.session.script, pooled: borrowed.session, snapshot: borrowed.snapshot)
+        }
+        guard let executor else { throw SessionError.runtimeUnavailable }
+        if let pool, let poolKey {
+            let session = try pool.makeSession(executor: executor, manifest: command.manifest,
+                                               pluginDirectory: command.pluginDirectory,
+                                               commandID: command.commandID, query: initialInput)
+            return Source(script: session.script, pooled: session, snapshot: nil)
+        }
+        let script = try executor.makeSession(
+            manifest: command.manifest, pluginDirectory: command.pluginDirectory,
+            commandID: command.commandID, query: initialInput,
+            hostCall: { [weak self] method, params in
+                guard let self else { throw PluginSessionError.closed }
+                return try await self.handleHostCall(method, params: params)
+            },
+            onHostReply: { [weak self] method in
+                Task { @MainActor in
+                    guard let self, self.isActive else { return }
+                    self.didReplyHostCall(method)
+                }
+            }
+        )
+        return Source(script: script, pooled: nil, snapshot: nil)
     }
 
     func commitInput(_ text: String) {
@@ -99,9 +132,39 @@ final class PluginInteractionSession: Identifiable {
         webHostTasks.removeAll()
         list?.close()
         inputCoordinator?.close()
+        pooled?.router.session = nil
+        pooled = nil
         script?.close()
+        script = nil
         exitWebPage?()
         exitWebPage = nil
+    }
+
+    /// 退出交互但保留脚本进程，交给池复用；无池时等同于关闭。
+    func suspend() {
+        guard isActive, let pool, let poolKey, let pooled else { close(); return }
+        isActive = false
+        for task in webHostTasks.values { task.cancel() }
+        webHostTasks.removeAll()
+        let snapshot = list?.snapshot
+        list?.close()
+        inputCoordinator?.close()
+        self.pooled = nil
+        script = nil
+        exitWebPage?()
+        exitWebPage = nil
+        pool.recycle(pooled, snapshot: snapshot, for: poolKey)
+    }
+
+    /// 宿主推送只传递数据：插件更新内存副本后由 `reloadList()` 重跑当前查询。
+    func notify(_ name: String, payload: PluginValue = .null) {
+        guard isActive else { return }
+        script?.notify(name, payload: payload)
+    }
+
+    func reloadList() {
+        guard isActive, let inputCoordinator else { return }
+        inputCoordinator.updateInput(inputText)
     }
 
     func didReplyHostCall(_ method: String) {

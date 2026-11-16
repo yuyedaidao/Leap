@@ -112,9 +112,13 @@ public final class PluginListSession {
     private var queryRunning = false
     private var queryReady = false
 
-    public init(debounce: Duration = .milliseconds(16), call: @escaping Call) {
+    public init(debounce: Duration = .milliseconds(16),
+                initialSnapshot: PluginListSnapshot = PluginListSnapshot(items: []), call: @escaping Call) {
         self.debounce = debounce
         self.call = call
+        // 复用会话时先用上次列表占位，避免重开时白屏。
+        snapshot = initialSnapshot
+        selectedID = initialSnapshot.items.first?.id
     }
 
     public func updateInput(_ text: String) {

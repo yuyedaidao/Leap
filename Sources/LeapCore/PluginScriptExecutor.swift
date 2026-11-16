@@ -113,4 +113,9 @@ public actor PluginScriptSession {
     }
 
     public nonisolated func close() { process.close(commandID: commandID, query: initialInput) }
+
+    /// 宿主推送事件给已注册 `leap.onHostEvent` 的插件；脚本不回帧。
+    public nonisolated func notify(_ name: String, payload: PluginValue = .null) {
+        process.notify(name, payload: payload)
+    }
 }

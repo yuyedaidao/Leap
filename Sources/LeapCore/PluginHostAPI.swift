@@ -38,6 +38,8 @@ public final class PluginHostAPI: NSObject, UNUserNotificationCenterDelegate {
     public let documentStores: PluginDocumentStoreProvider
     /// 宿主写入剪贴板后通知历史采集跳过该次变更，避免粘贴动作产生新历史。
     public var onClipboardWrite: (() -> Void)?
+    /// 剪切板历史由宿主内存持有，插件只读与删除，不再自己维护数据库。
+    public var clipboardHistory: ClipboardHistoryStore?
     private let logger = YQLogger(label: "com.padding.leap/host-api")
     public private(set) var pendingCalls = 0
     private static let imageDecoder = ImageDecoder()
@@ -193,6 +195,41 @@ extension PluginHostAPI {
         onClipboardWrite?()
     }
 
+    private func clipboardHistoryRecords() throws -> ClipboardHistoryStore {
+        guard let clipboardHistory else { throw PluginSessionError.plugin("剪切板历史不可用。") }
+        return clipboardHistory
+    }
+
+    private func clipboardSearch(_ params: PluginValue) throws -> PluginValue {
+        let query: String
+        if let value = params["query"] {
+            guard let text = value.string else { throw PluginSessionError.plugin("参数 query 必须为字符串。") }
+            query = text
+        } else { query = "" }
+        let type: String?
+        if let value = params["type"], value != .null {
+            guard let text = value.string else { throw PluginSessionError.plugin("参数 type 必须为字符串。") }
+            type = text
+        } else { type = nil }
+        let limit: Int
+        if let value = params["limit"], value != .null {
+            guard case let .number(number) = value, number >= 1, number <= 100 else {
+                throw PluginSessionError.plugin("参数 limit 必须为 1 至 100 的数字。")
+            }
+            limit = Int(number)
+        } else { limit = 100 }
+        return .array(try clipboardHistoryRecords().search(query, type: type, limit: limit).map(\.pluginValue))
+    }
+
+    private func clipboardRemove(_ params: PluginValue) throws -> PluginValue {
+        guard case let .array(values)? = params["ids"], !values.isEmpty, values.count <= 1000,
+              values.allSatisfy({ $0.string?.isEmpty == false }) else {
+            throw PluginSessionError.plugin("需要提供 1 至 1000 个记录 ID。")
+        }
+        try clipboardHistoryRecords().remove(ids: Set(values.compactMap(\.string)))
+        return .bool(true)
+    }
+
     private func database(_ method: String, params: PluginValue, context: Context) throws -> PluginValue {
         do {
             let store = try documentStores.store(for: context.pluginID)
@@ -217,6 +254,12 @@ extension PluginHostAPI {
             try check(context)
             try write(clipboard)
         case "getCopyedFiles": return copiedFiles()
+        case "clipboardHistory": return .array(try clipboardHistoryRecords().records.map(\.pluginValue))
+        case "clipboardSearch": return try clipboardSearch(params)
+        case "clipboardRemove": return try clipboardRemove(params)
+        case "clipboardClear":
+            try clipboardHistory?.clearAll()
+            return .bool(true)
         case "dbPut", "dbGet", "dbRemove", "dbAllDocs": return try database(method, params: params, context: context)
         case let name where Self.inputMethods.contains(name):
             try await input(name, params: params, context: context)

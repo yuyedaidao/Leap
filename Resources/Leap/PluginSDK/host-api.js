@@ -1,6 +1,6 @@
 // 字节数组转换为 Data URL，避免 JSON 将其变成数字字典。
 (function (root) {
-  function create(host) {
+  function create(host, onHostEvent) {
     const invoke = (method, params) => {
       try { return Promise.resolve(host(method, params)); }
       catch (error) { return Promise.reject(error); }
@@ -51,6 +51,29 @@
           } catch (error) { return Promise.reject(error); }
         },
         allDocs: () => invoke('dbAllDocs', {}),
+      },
+      clipboard: {
+        history: () => invoke('clipboardHistory', {}),
+        search: (query = '', options = {}) => {
+          if (typeof query !== 'string') return Promise.reject(new TypeError('搜索词必须为字符串。'));
+          const { type, limit } = options || {};
+          if (type !== undefined && type !== null && typeof type !== 'string') return Promise.reject(new TypeError('记录类型必须为字符串。'));
+          if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1 && limit <= 100)) return Promise.reject(new TypeError('数量限制必须为 1 至 100 的整数。'));
+          return invoke('clipboardSearch', { query, ...(type ? { type } : {}), ...(limit !== undefined ? { limit } : {}) });
+        },
+        remove: ids => {
+          const values = typeof ids === 'string' ? [ids] : ids;
+          if (!Array.isArray(values) || !values.length || values.length > 1000
+            || values.some(id => typeof id !== 'string' || !id)) {
+            return Promise.reject(new TypeError('记录 ID 必须为 1 至 1000 个非空字符串。'));
+          }
+          return invoke('clipboardRemove', { ids: values });
+        },
+        clear: () => invoke('clipboardClear', {}),
+        onAppend: callback => {
+          if (typeof callback !== 'function') throw new TypeError('处理器必须为函数。');
+          return onHostEvent('clipboard.append', callback);
+        },
       },
       showLoading: () => invoke('showLoading', {}),
       hideLoading: () => invoke('hideLoading', {}),
