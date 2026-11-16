@@ -71,13 +71,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startAppUpdates() {
         appUpdates.willPresentUpdate = { [weak self] in
-            self?.launcherPanelController?.hideForUpdate()
-            self?.settingsWindowPresenter.prepareForUpdate()
+            guard let self else { return }
+            launcherPanelController?.hideForUpdate()
+            settingsWindowPresenter.prepareForUpdate()
+            // 设置与启动器都是非激活面板，应用不激活时 Sparkle 的弹窗会落到上次活跃的空间或主屏上，
+            // 表现为“点了检查更新但没反应”。先激活应用，再把弹窗并入设置所在的当前空间。
+            NSApp.activate(ignoringOtherApps: true)
+            Task { @MainActor in
+                self.placeUpdateWindowsBesideSettings()
+            }
         }
         // UI 测试不能访问真实更新源或替换正在运行的应用。
         if !ProcessInfo.processInfo.arguments.contains("-leap-testing-support-directory") {
             appUpdates.start()
         }
+    }
+
+    /// Sparkle 的窗口与本应用同进程，直接把它挪到当前空间和设置所在屏幕，避免弹窗出现在别的屏幕/空间。
+    private func placeUpdateWindowsBesideSettings() {
+        let settings = settingsWindowPresenter.window
+        let screen = settings?.screen
+            ?? NSScreen.leapScreen(containing: NSEvent.mouseLocation)
+            ?? NSScreen.main
+        for window in NSApp.windows where window.isVisible && Self.isUpdateWindow(window) {
+            window.collectionBehavior.insert(.moveToActiveSpace)
+            window.orderFrontRegardless()
+            guard let screen else { continue }
+            window.setFrameOrigin(NSPoint(
+                x: screen.visibleFrame.midX - window.frame.width / 2,
+                y: screen.visibleFrame.midY - window.frame.height / 2
+            ))
+        }
+    }
+
+    // Sparkle 的弹窗由 SU/SPU 开头的窗口控制器持有（SUUpdateAlert、SUStatusController 等），借此只动更新弹窗。
+    private static func isUpdateWindow(_ window: NSWindow) -> Bool {
+        let controller = window.windowController.map { String(describing: type(of: $0)) }
+            ?? String(describing: type(of: window))
+        return controller.hasPrefix("SU") || controller.hasPrefix("SPU")
     }
 
     func showSettings(on screen: NSScreen? = nil, source: String) {

@@ -28,6 +28,9 @@ final class SettingsWindowPresenter {
         panel?.level = .normal
     }
 
+    /// 供 AppDelegate 判断哪些窗口属于设置面板，避免把设置窗口当成更新弹窗调整。
+    var window: NSWindow? { panel }
+
     func present(on screen: NSScreen? = nil, source: String, content: () -> LeapSettingsRootView) {
         let target = resolveScreen(preferredDisplayID: screen?.leapDisplayID)
         let isNew = panel == nil
