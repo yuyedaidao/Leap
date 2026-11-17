@@ -42,6 +42,10 @@ struct PluginWebView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         let controller = configuration.userContentController
+        let webView = PluginPageWebView(frame: .zero, configuration: configuration)
+        webView.configureForHostAppearance()
+        // 用户脚本按添加顺序执行：首帧底色必须先于 SDK，否则 SDK 可能先拿到白底布局。
+        controller.addUserScript(webView.firstPaintScript())
         controller.addUserScript(WKUserScript(
             source: context.coordinator.sdkSource,
             injectionTime: .atDocumentStart,
@@ -51,7 +55,6 @@ struct PluginWebView: NSViewRepresentable {
         controller.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: "leapDirectory")
         controller.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: "leapHost")
 
-        let webView = PluginPageWebView(frame: .zero, configuration: configuration)
         webView.focusesOnAttach = interaction?.configuration.inputEnabled == false
         webView.navigationDelegate = context.coordinator
         webView.loadFileURL(pageURL, allowingReadAccessTo: readAccessDirectory)
@@ -302,6 +305,40 @@ struct PluginWebView: NSViewRepresentable {
 /// 无顶部参数框的内嵌页面仍需接过旧搜索框的焦点，避免非激活面板被误判为失焦。
 private final class PluginPageWebView: WKWebView {
     var focusesOnAttach = false
+
+    /// 让 WebView 不画自己的白底，并跟随 App 外观；否则深色下会先闪一帧白底再变深。
+    func configureForHostAppearance() {
+        // WKWebView 默认绘制不透明白底，早于页面首帧呈现；公开 API 无法关掉这层绘制。
+        setValue(false, forKey: "drawsBackground")
+        // 跟随系统时要显式给外观，否则 WebView 可能先按亮色合成一帧。
+        appearance = NSApp.appearance ?? NSApp.effectiveAppearance
+    }
+
+    /// 在文档建立时就把底色定好，早于页面 CSS 解析，避免露出 WebKit 默认 canvas 色。
+    func firstPaintScript() -> WKUserScript {
+        let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        var background = NSColor.textBackgroundColor
+        // textBackgroundColor 是动态颜色，只在对应外观下才能取到真实值。
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            background = NSColor.textBackgroundColor.usingColorSpace(.sRGB) ?? background
+        }
+        let color = String(
+            format: "#%02x%02x%02x",
+            Int((background.redComponent * 255).rounded()),
+            Int((background.greenComponent * 255).rounded()),
+            Int((background.blueComponent * 255).rounded())
+        )
+        let css = "html{background:\(color);color-scheme:\(isDark ? "dark" : "light")}"
+        let source = """
+        (() => {
+          const style = document.createElement('style');
+          style.textContent = "\(css)";
+          (document.head || document.documentElement).appendChild(style);
+        })();
+        """
+        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard focusesOnAttach else { return }
