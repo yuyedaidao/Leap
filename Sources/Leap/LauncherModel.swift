@@ -127,7 +127,7 @@ final class LauncherModel {
         clipboardMonitor = wiring.monitor
         sessionPool = PluginSessionPool()
         recentStore = LauncherUsageStore()
-        scriptExecutor = PluginScriptExecutor(runtimeLocator: BundledRuntimeLocator(paths: paths))
+        scriptExecutor = Self.makeScriptExecutor(paths: paths)
         shellExecutor = ShellScriptExecutor()
         fixtureCommands = nil
         fixtureApplications = nil
@@ -202,23 +202,6 @@ final class LauncherModel {
     func clearRecentItems() {
         recentStore.clear()
         rebuildRecentItems()
-    }
-
-    func rebuildApplicationIndex(completion: @escaping (Result<Void, Error>) -> Void) {
-        guard let applicationIndexCacheURL else {
-            completion(.failure(ApplicationIndexError.unavailable))
-            return
-        }
-        do {
-            if FileManager.default.fileExists(atPath: applicationIndexCacheURL.path) {
-                try FileManager.default.removeItem(at: applicationIndexCacheURL)
-            }
-        } catch {
-            Self.logger.error("删除系统应用索引缓存失败：\(error.localizedDescription)。")
-            completion(.failure(error))
-            return
-        }
-        refreshApplications(completion: completion)
     }
 
     func startApplicationIndexing() {
@@ -444,6 +427,33 @@ final class LauncherModel {
 
 /// 最近使用列表只做展示过滤，清理必须等两侧目录都就绪后再执行。
 extension LauncherModel {
+    func rebuildApplicationIndex(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard let applicationIndexCacheURL else {
+            completion(.failure(ApplicationIndexError.unavailable))
+            return
+        }
+        do {
+            if FileManager.default.fileExists(atPath: applicationIndexCacheURL.path) {
+                try FileManager.default.removeItem(at: applicationIndexCacheURL)
+            }
+        } catch {
+            Self.logger.error("删除系统应用索引缓存失败：\(error.localizedDescription)。")
+            completion(.failure(error))
+            return
+        }
+        refreshApplications(completion: completion)
+    }
+
+    /// 所有 JS 插件共享一个常驻 node daemon：115MB 运行时的冷加载只在 App 生命周期内付一次。
+    private static func makeScriptExecutor(paths: AppPaths) -> PluginScriptExecutor {
+        let locator = BundledRuntimeLocator(paths: paths)
+        let daemon = (try? locator.executable(for: .javascript)).map { executable in
+            PluginDaemon(executable: executable,
+                         script: paths.resourceDirectory.appendingPathComponent("PluginSDK/daemon.cjs"))
+        }
+        return PluginScriptExecutor(runtimeLocator: locator, daemon: daemon)
+    }
+
     func rebuildRecentItems() {
         var items: [LauncherUsageKey: LauncherItem] = [:]
         for item in applications.map(LauncherItem.application) + commands.map(LauncherItem.plugin) {
@@ -701,7 +711,10 @@ extension LauncherModel {
         guard let sessionPool, let scriptExecutor, interaction == nil,
               let command = commands.first(where: { $0.pluginID == AppPaths.clipboardPluginID }) else { return }
         let key = PluginSessionPool.Key(pluginID: command.pluginID, commandID: command.commandID)
+        let daemon = scriptExecutor.daemon
         Task { [weak self] in
+            // daemon 进程本身也要在空闲时拉起，否则首次打开仍要等运行时加载。
+            try? daemon?.start()
             try? await Task.sleep(for: .seconds(1))
             // 用户已经先一步打开时不再重复创建会话。
             guard let self, self.interaction == nil else { return }

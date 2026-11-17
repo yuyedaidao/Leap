@@ -45,6 +45,23 @@ extension PluginMessage {
         value = container.contains(.value) ? try container.decode(PluginValue.self, forKey: .value) : nil
         error = try container.decodeIfPresent(String.self, forKey: .error)
     }
+
+    /// daemon 走 JSON 对象转发，这里把消息拆成与协议字段同名的键值。
+    var fields: [String: PluginValue] {
+        var fields: [String: PluginValue] = ["protocol": .number(1), "type": .string(type), "id": .string(id)]
+        if let method { fields["method"] = .string(method) }
+        if let parentID { fields["parentID"] = .string(parentID) }
+        if let params { fields["params"] = params }
+        if let value { fields["value"] = value }
+        if let error { fields["error"] = .string(error) }
+        return fields
+    }
+}
+
+/// 会话传输层：per-process 是现状，daemon 走共享 node 进程里的 Worker。
+public enum PluginTransport: Sendable {
+    case process
+    case daemon(PluginDaemon, session: String, entry: URL)
 }
 
 /// 所有可变状态限定在队列内；文件句柄回调只投递数据，不在主线程阻塞读写。
@@ -65,23 +82,12 @@ public final class PluginProcessSession: @unchecked Sendable {
         let listUpdate: ListUpdate?
         let loadingUpdate: LoadingUpdate?
     }
-    private final class WeakSession: @unchecked Sendable {
+    fileprivate final class WeakSession: @unchecked Sendable {
         weak var value: PluginProcessSession?
         init(_ value: PluginProcessSession) { self.value = value }
     }
-    private static let registryLock = NSLock()
-    nonisolated(unsafe) private static var registry: [WeakSession] = []
-
-    /// 应用正在退出时不能依赖延迟计时器执行，立即清理仅由本宿主创建的进程。
-    public static func terminateAll() {
-        let sessions = registryLock.withLock { registry.compactMap(\.value) }
-        for session in sessions {
-            session.queue.sync {
-                if session.process.isRunning { kill(session.process.processIdentifier, SIGKILL) }
-                session.finishClose()
-            }
-        }
-    }
+    fileprivate static let registryLock = NSLock()
+    nonisolated(unsafe) fileprivate static var registry: [WeakSession] = []
 
     private let queue = DispatchQueue(label: "com.padding.leap/plugin-session", qos: .userInitiated)
     private let writer = DispatchQueue(label: "com.padding.leap/plugin-writer", qos: .userInitiated)
@@ -89,6 +95,17 @@ public final class PluginProcessSession: @unchecked Sendable {
     private let input = Pipe()
     private let output = Pipe()
     private let errors = Pipe()
+    /// daemon 模式的会话标识；为 nil 时走独立的 Process 路径。
+    private let daemonSession: String?
+    private let daemonEntry: URL?
+    private weak var daemon: PluginDaemon?
+    /// 会话正常关闭后回调；池不再单独处理，撤回挂在异常终止（fail）上。
+    private var onExit: (@Sendable () -> Void)?
+
+    /// 回调在会话队列上设置，避免与 finishClose 竞争。
+    public func setOnExit(_ handler: @escaping @Sendable () -> Void) {
+        queue.sync { onExit = handler }
+    }
     private let hostCall: HostCall
     private let onHostReply: @Sendable (String) -> Void
     private let logger = YQLogger(label: "com.padding.leap/plugin-session")
@@ -106,13 +123,22 @@ public final class PluginProcessSession: @unchecked Sendable {
 
     public init(executable: URL, arguments: [String], directory: URL? = nil,
                 hostCall: @escaping HostCall = { _, _ in throw PluginSessionError.plugin("宿主接口不可用。") },
-                onHostReply: @escaping @Sendable (String) -> Void = { _ in }, hostWaitTimeout: TimeInterval = 60) {
+                onHostReply: @escaping @Sendable (String) -> Void = { _ in }, hostWaitTimeout: TimeInterval = 60,
+                transport: PluginTransport = .process) {
         process.executableURL = executable
         process.arguments = arguments
         process.currentDirectoryURL = directory
         process.standardInput = input
         process.standardOutput = output
         process.standardError = errors
+        if case let .daemon(daemon, session, entry) = transport {
+            self.daemon = daemon
+            daemonSession = session
+            daemonEntry = entry
+        } else {
+            daemonSession = nil
+            daemonEntry = nil
+        }
         self.hostCall = hostCall
         self.onHostReply = onHostReply
         self.hostWaitTimeout = max(0.01, hostWaitTimeout)
@@ -121,6 +147,9 @@ public final class PluginProcessSession: @unchecked Sendable {
             Self.registry.append(WeakSession(self))
         }
     }
+
+    /// 池用它判断预热出的会话是否已经失效，避免入池死会话。
+    public var isClosed: Bool { queue.sync { closed } }
 
     public func request(
         _ method: String, commandID: String, query: String, itemID: String? = nil,
@@ -162,35 +191,17 @@ public final class PluginProcessSession: @unchecked Sendable {
         }
     }
 
-    public var processIdentifier: Int32 { process.processIdentifier }
-
-    /// 单向推送：不登记 pending，也不等待回执；脚本侧不会回帧。
-    public func notify(_ name: String, payload: PluginValue = .null) {
-        queue.async { [self] in
-            guard ready, !closed, !shuttingDown else { return }
-            send(PluginMessage(type: "event", id: sessionID + "/notify-" + UUID().uuidString, method: "notify",
-                               params: .object(["name": .string(name), "payload": payload])))
-        }
-    }
-
-    public func close(commandID: String = "", query: String = "") {
-        queue.async { [self] in
-            guard !closed, !shuttingDown else { return }
-            shuttingDown = true
-            for task in hostTasks.values { task.cancel() }
-            for id in pending.keys { send(PluginMessage(type: "cancel", id: id)) }
-            resumePending(PluginSessionError.closed)
-            if ready {
-                send(PluginMessage(type: "event", id: sessionID + "/exit", method: "exit",
-                                   params: .object(["commandID": .string(commandID), "query": .string(query)])))
-                queue.asyncAfter(deadline: .now() + 0.25) { [self] in finishClose() }
-            } else { finishClose() }
-        }
-    }
+    public var processIdentifier: Int32 { daemon?.processIdentifier ?? process.processIdentifier }
 
     private func startIfNeeded() throws {
         guard !started else { return }
         started = true
+        if let daemon, let daemonSession {
+            daemon.attach(daemonSession, handler: self)
+            guard let entry = daemonEntry else { throw PluginSessionError.plugin("缺少插件入口。") }
+            try daemon.spawn(daemonSession, entry: entry)
+            return
+        }
         guard fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
@@ -230,6 +241,11 @@ public final class PluginProcessSession: @unchecked Sendable {
         guard !closed else { return }
         do {
             let data = try encoded(message)
+            if let daemon, let daemonSession {
+                daemon.write(message.fields, session: daemonSession)
+                completion?()
+                return
+            }
             let handle = input.fileHandleForWriting
             writer.async { [weak self] in
                 do { try handle.write(contentsOf: data); completion?() }
@@ -342,6 +358,49 @@ public final class PluginProcessSession: @unchecked Sendable {
         }
     }
 
+    /// 异常终止（进程崩溃、Worker 失败、超时）：先通知持有者摘掉这个已死的会话，再收尾。
+    private func fail(_ error: any Error) {
+        guard !closed else { return }
+        logger.error("插件会话失败：\(error.localizedDescription)。")
+        onExit?()
+        resumePending(error)
+        finishClose()
+    }
+
+    private func finishClose() {
+        guard !closed else { return }
+        closed = true
+        resumePending(PluginSessionError.closed)
+        for task in hostTasks.values { task.cancel() }
+        hostTasks.removeAll()
+        hostParents.removeAll()
+        if let daemon, let daemonSession {
+            daemon.close(daemonSession)
+            daemon.detach(daemonSession)
+            logger.debug("已释放插件 daemon 会话。")
+            return
+        }
+        output.fileHandleForReading.readabilityHandler = nil
+        errors.fileHandleForReading.readabilityHandler = nil
+        // 先终止读端，阻塞的写操作才能退出；关闭写句柄由同一写队列完成。
+        let inputHandle = input.fileHandleForWriting
+        writer.async { try? inputHandle.close() }
+        try? output.fileHandleForReading.close()
+        try? errors.fileHandleForReading.close()
+        process.terminationHandler = nil
+        if process.isRunning {
+            process.terminate()
+            // 用户脚本可能忽略 SIGTERM；最终强制结束，且不靠循环轮询进程。
+            let runningProcess = process
+            queue.asyncAfter(deadline: .now() + 0.25) {
+                if runningProcess.isRunning { kill(runningProcess.processIdentifier, SIGKILL) }
+            }
+        }
+        logger.debug("已释放插件会话。")
+    }
+}
+
+extension PluginProcessSession {
     /// 仅暂停所属事件的业务计时；并发宿主调用共同消耗同一个 60 秒等待额度。
     private func refreshDeadline(_ id: String) {
         guard var request = pending[id] else { return }
@@ -375,37 +434,58 @@ public final class PluginProcessSession: @unchecked Sendable {
     private func resumePending(_ error: any Error) {
         for id in Array(pending.keys) { finish(id, result: .failure(error)) }
     }
+}
 
-    private func fail(_ error: any Error) {
-        guard !closed else { return }
-        logger.error("插件会话失败：\(error.localizedDescription)。")
-        resumePending(error)
-        finishClose()
+extension PluginProcessSession: PluginDaemon.SessionHandler {
+    /// daemon 已解析好的帧直接进入现有状态机，不再第二次分帧。
+    public func daemonReceive(_ frame: PluginDaemon.Frame) {
+        queue.async { [self] in
+            let message = PluginMessage(type: frame.type, id: frame.id, method: frame.method, parentID: frame.parentID,
+                                        params: frame.params, value: frame.value, error: frame.error)
+            receive(message)
+        }
     }
 
-    private func finishClose() {
-        guard !closed else { return }
-        closed = true
-        resumePending(PluginSessionError.closed)
-        for task in hostTasks.values { task.cancel() }
-        hostTasks.removeAll()
-        hostParents.removeAll()
-        output.fileHandleForReading.readabilityHandler = nil
-        errors.fileHandleForReading.readabilityHandler = nil
-        // 先终止读端，阻塞的写操作才能退出；关闭写句柄由同一写队列完成。
-        let inputHandle = input.fileHandleForWriting
-        writer.async { try? inputHandle.close() }
-        try? output.fileHandleForReading.close()
-        try? errors.fileHandleForReading.close()
-        process.terminationHandler = nil
-        if process.isRunning {
-            process.terminate()
-            // 用户脚本可能忽略 SIGTERM；最终强制结束，且不靠循环轮询进程。
-            let runningProcess = process
-            queue.asyncAfter(deadline: .now() + 0.25) {
-                if runningProcess.isRunning { kill(runningProcess.processIdentifier, SIGKILL) }
+    public func daemonFailed(_ error: any Error) {
+        queue.async { [self] in fail(error) }
+    }
+}
+
+extension PluginProcessSession {
+    /// 应用正在退出时不能依赖延迟计时器执行，立即清理仅由本宿主创建的进程。
+    public static func terminateAll() {
+        let sessions = registryLock.withLock { registry.compactMap(\.value) }
+        for session in sessions {
+            session.queue.sync {
+                if session.process.isRunning { kill(session.process.processIdentifier, SIGKILL) }
+                session.finishClose()
             }
         }
-        logger.debug("已释放插件会话。")
+    }
+}
+
+extension PluginProcessSession {
+    /// 单向推送：不登记 pending，也不等待回执；脚本侧不会回帧。
+    public func notify(_ name: String, payload: PluginValue = .null) {
+        queue.async { [self] in
+            guard ready, !closed, !shuttingDown else { return }
+            send(PluginMessage(type: "event", id: sessionID + "/notify-" + UUID().uuidString, method: "notify",
+                               params: .object(["name": .string(name), "payload": payload])))
+        }
+    }
+
+    public func close(commandID: String = "", query: String = "") {
+        queue.async { [self] in
+            guard !closed, !shuttingDown else { return }
+            shuttingDown = true
+            for task in hostTasks.values { task.cancel() }
+            for id in pending.keys { send(PluginMessage(type: "cancel", id: id)) }
+            resumePending(PluginSessionError.closed)
+            if ready {
+                send(PluginMessage(type: "event", id: sessionID + "/exit", method: "exit",
+                                   params: .object(["commandID": .string(commandID), "query": .string(query)])))
+                queue.asyncAfter(deadline: .now() + 0.25) { [self] in finishClose() }
+            } else { finishClose() }
+        }
     }
 }

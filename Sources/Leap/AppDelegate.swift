@@ -124,6 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         globalHotKey?.unregister()
         launcherPanelController?.closePluginSessions()
+        // 先停共享 daemon，再把剩下的独立进程收尾，避免留下孤儿 node。
+        PluginDaemon.terminateAll()
         PluginProcessSession.terminateAll()
     }
 

@@ -62,6 +62,7 @@ final class PluginSessionPool {
             existing.session.script.close()
         }
         let lifetime = lifetime
+        observe(session, for: key)
         let expiry = Task { [weak self] in
             try? await Task.sleep(for: lifetime)
             guard !Task.isCancelled else { return }
@@ -73,28 +74,36 @@ final class PluginSessionPool {
     /// 宿主启动后预热，把首次打开的冷启代价挪到空闲时。
     func prewarm(_ key: Key, executor: PluginScriptExecutor, manifest: PluginManifest, pluginDirectory: URL) {
         guard entries[key] == nil else { return }
-        do {
-            let session = try makeSession(executor: executor, manifest: manifest, pluginDirectory: pluginDirectory,
-                                          commandID: key.commandID, query: "")
-            // 只构造不算预热：Node 进程要 start() 才真正拉起。
-            Task { [weak self] in
-                do {
-                    try await session.script.start()
-                } catch {
-                    // start 失败会缓存失败的 enter，入池后每次复用都复读同一错误，直接关掉。
-                    session.script.close()
-                    return
-                }
-                guard let self else { return }
-                guard entries[key] == nil else {
-                    session.script.close()  // 用户已先行打开，这个预热进程没有归属
+        Task { [weak self] in
+            do {
+                // 会话在后台建好并 start，失败时自动降级为独立进程。
+                let session = try await self?.makePrewarmSession(executor: executor, manifest: manifest,
+                                                                 pluginDirectory: pluginDirectory, commandID: key.commandID)
+                guard let self, let session else { return }
+                guard entries[key] == nil, !session.script.processSession.isClosed else {
+                    session.script.close()  // 用户已先行打开，这个预热会话没有归属
                     return
                 }
                 recycle(session, snapshot: nil, for: key)
+            } catch {
+                // 预热只是优化，失败时按普通路径重新创建。
             }
-        } catch {
-            // 预热只是优化，失败时按普通路径重新创建。
         }
+    }
+
+    /// 会话在池外自行关闭（崩溃、超时或插件主动退出）时必须摘掉条目，避免下次复用一个已死的会话。
+    private func observe(_ session: Session, for key: Key) {
+        // 回调在会话队列上触发，只能携带 Sendable 的身份标识，回到主线程再比对。
+        let identity = ObjectIdentifier(session)
+        session.script.processSession.setOnExit { [weak self] in
+            Task { @MainActor in self?.discard(key, identity: identity) }
+        }
+    }
+
+    private func discard(_ key: Key, identity: ObjectIdentifier) {
+        guard let entry = entries[key], ObjectIdentifier(entry.session) == identity else { return }
+        entry.expiry.cancel()
+        entries.removeValue(forKey: key)
     }
 
     func closeAll() {
@@ -114,6 +123,20 @@ final class PluginSessionPool {
             onHostReply: { [weak router] method in router?.reply(method) }
         )
         return Session(router: router, script: script)
+    }
+
+    /// 预热专用：会话在后台建好并 start，失败时由会话自己降级为独立进程。
+    private func makePrewarmSession(executor: PluginScriptExecutor, manifest: PluginManifest,
+                                   pluginDirectory: URL, commandID: String) async throws -> Session {
+        let session = try makeSession(executor: executor, manifest: manifest, pluginDirectory: pluginDirectory,
+                                      commandID: commandID, query: "")
+        do {
+            try await session.script.start()
+        } catch {
+            session.script.close()
+            throw error
+        }
+        return session
     }
 
     private func evict(_ key: Key, session: Session) {
