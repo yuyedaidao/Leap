@@ -39,7 +39,7 @@
 - [x] 复制 `AppIcon.backup.appiconset/Contents.json` 到新目录（内容与本任务一致，无需改）
 - [x] `xcodebuild build -workspace Leap.xcworkspace -scheme Leap -destination 'platform=macOS'`
 - [x] 核对产物：`AppIcon.icns` 存在、`Info.plist` 的 `CFBundleIconName == AppIcon`、icns 内档位齐全
-- [ ] 按 `~/.codex/skills/git-auto-commit/SKILL.md` 风格 `type(scope): 中文标题` 提交并 `git push origin main`
+- [x] 按 `~/.codex/skills/git-auto-commit/SKILL.md` 风格 `type(scope): 中文标题` 提交并 `git push origin main`
 
 ## Reuse
 

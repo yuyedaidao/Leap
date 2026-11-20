@@ -212,14 +212,14 @@ private struct LauncherSearchHeader: View {
                 } label: {
                     let radius: CGFloat = 20
                     let bWidth = radius * 2
-                    let iWidth = ceil(sqrt(radius * radius * 2)) * 2
+                    // 图标源图已裁掉透明留白，按比例内缩即可，不能再放大填满（会被圆形遮罩切掉主体）。
+                    let iWidth = (bWidth * 0.62).rounded()
                     ZStack {
                         Circle()
                             .fill(.quaternary)
                         Image("LauncherSettingsIcon")
                             .resizable()
-                            .scaledToFill()
-                            // 放大系统图标以裁掉 macOS 默认的圆角留白。
+                            .scaledToFit()
                             .frame(width: iWidth, height: iWidth)
                     }
                     .frame(width: bWidth, height: bWidth)
