@@ -17,14 +17,16 @@ private func makeApplication(
     backgroundOnly: Bool = false,
     localizedName: String? = nil,
     localizedTable: [String: Any]? = nil,
-    isSymbolicLink: Bool = false
+    isSymbolicLink: Bool = false,
+    packageType: String? = "APPL"
 ) throws -> URL {
     // 符号链接形态：真实应用藏在隐藏目录里，仅通过一个隐藏符号链接暴露（Safari 的挂载方式）。
     let container = isSymbolicLink
         ? directory.appendingPathComponent(".Targets", isDirectory: true) : directory
     let application = try makeBundle(
         named: name, bundleID: bundleID, in: container,
-        backgroundOnly: backgroundOnly, localizedName: localizedName, localizedTable: localizedTable
+        backgroundOnly: backgroundOnly, localizedName: localizedName, localizedTable: localizedTable,
+        packageType: packageType
     )
     guard isSymbolicLink else { return application }
     let link = directory.appendingPathComponent("\(name).app", isDirectory: true)
@@ -45,7 +47,8 @@ private func makeBundle(
     in directory: URL,
     backgroundOnly: Bool,
     localizedName: String?,
-    localizedTable: [String: Any]?
+    localizedTable: [String: Any]?,
+    packageType: String? = "APPL"
 ) throws -> URL {
     let application = directory.appendingPathComponent("\(name).app", isDirectory: true)
     let contents = application.appendingPathComponent("Contents", isDirectory: true)
@@ -55,11 +58,12 @@ private func makeBundle(
     try Data("#!/bin/sh\n".utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
     var info: [String: Any] = [
-        "CFBundlePackageType": "APPL",
         "CFBundleExecutable": "Runner",
         "CFBundleIdentifier": bundleID,
         "CFBundleName": name
     ]
+    // nil 复现只缺包类型的系统件（CoreServicesUIAgent 之类）。
+    if let packageType { info["CFBundlePackageType"] = packageType }
     if backgroundOnly { info["LSBackgroundOnly"] = true }
     let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
     try data.write(to: contents.appendingPathComponent("Info.plist"))
@@ -356,7 +360,7 @@ struct LauncherShellTests {
         let cacheURL = root.appendingPathComponent("index.json")
         try SystemApplicationIndexCache.save(applications, to: cacheURL)
         #expect(SystemApplicationIndexCache.load(from: cacheURL) == applications)
-        for version in [2, 3, 4, 5] {
+        for version in [2, 3, 4, 5, 6] {
             try Data("{\"version\":\(version),\"applications\":[]}".utf8).write(to: cacheURL)
             #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
         }
@@ -401,6 +405,42 @@ struct LauncherShellTests {
 
         #expect(applications.map(\.bundleIdentifier) == ["com.apple.Safari"])
         #expect(applications.first?.matchRank(for: "safari") == 0)
+    }
+
+    @Test("包类型不是 APPL 的系统应用（访达、密码）仍会被索引")
+    func systemApplicationScannerIgnoresPackageType() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // 访达是 FNDR、密码是 XPC!，部分系统件干脆不写 CFBundlePackageType。
+        _ = try makeApplication(
+            named: "Finder",
+            bundleID: "com.apple.finder",
+            in: root,
+            localizedTable: ["zh_CN": ["CFBundleDisplayName": "访达"]],
+            packageType: "FNDR"
+        )
+        _ = try makeApplication(
+            named: "Passwords", bundleID: "com.apple.Passwords", in: root, packageType: "XPC!"
+        )
+        _ = try makeApplication(
+            named: "WiFiAgent", bundleID: "com.apple.wifi.WiFiAgent", in: root, packageType: nil
+        )
+        // 后台件仍必须排除，不能连 LSBackgroundOnly 一起放宽。
+        _ = try makeApplication(
+            named: "Claude Code URL Handler",
+            bundleID: "com.example.background",
+            in: root,
+            backgroundOnly: true
+        )
+
+        let applications = SystemApplicationScanner(roots: [root], preferredLanguages: ["zh-Hans"]).scan()
+
+        let identifiers = Set(applications.map(\.bundleIdentifier))
+        #expect(identifiers == ["com.apple.Passwords", "com.apple.finder", "com.apple.wifi.WiFiAgent"])
+        let finder = try #require(applications.first { $0.bundleIdentifier == "com.apple.finder" })
+        #expect(finder.name == "访达")
+        #expect(finder.matchRank(for: "访达") == 0)
+        #expect(finder.matchRank(for: "finder") == 0)
     }
 
     @Test("统一使用记录迁移旧插件历史，清理只在显式调用时发生")

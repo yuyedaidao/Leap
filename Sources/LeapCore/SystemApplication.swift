@@ -131,10 +131,11 @@ public struct SystemApplicationScanner: Sendable {
     }
 
     private func descriptor(for url: URL, fileManager: FileManager) -> SystemApplicationDescriptor? {
+        // 不能按 CFBundlePackageType 白名单过滤：系统应用的包类型并不都是 APPL，
+        // 访达是 FNDR、密码是 XPC!，白名单会持续漏掉下一类系统应用。
         guard !url.lastPathComponent.hasPrefix("."),
               let bundle = Bundle(url: url),
               let info = bundle.infoDictionary,
-              info["CFBundlePackageType"] as? String == "APPL",
               (info["LSBackgroundOnly"] as? Bool) != true,
               let executable = bundle.executableURL,
               fileManager.isExecutableFile(atPath: executable.path)
@@ -221,7 +222,7 @@ public enum SystemApplicationIndexCache {
     }
 
     // 检索字段和分词规则变化后使旧快照失效，避免继续使用旧拼音键。
-    private static let version = 6
+    private static let version = 7
 
     public static func load(from url: URL, fileManager: FileManager = .default) -> [SystemApplicationDescriptor]? {
         guard fileManager.fileExists(atPath: url.path),
