@@ -8,6 +8,14 @@
 - 测试：`xcodebuild test -workspace Leap.xcworkspace -scheme Leap -destination 'platform=macOS'`（可用 `-only-testing:LeapTests` 只跑单测）
 - 风格检查：`swiftlint`
 
+## 视觉改动的提交闸门
+
+界面外观类改动（图标、配色、间距、控件形态、动画等）构建与单测通过都不算验证完成：
+
+- 可以做到构建通过，并给出预览（渲染图、截图或让用户自己跑起来看）。
+- 在用户明确表示效果可以之前，不 `git commit`、不 `git push`。
+- 不要用“构建成功 + 测试通过”代替视觉确认；擅自改动布局或尺寸参数时尤其如此。
+
 ## 发版
 
 用户要求发版（升级版本、发布 Release、更新 Tap）时，默认直接代为完成前置工作：把工作区所有改动按主题拆分提交并推送到 `origin/main`，再升版本、跑 `./Scripts/publish-release.py`、更新 Homebrew Tap。不要停下来询问是否提交或推送。步骤与兜底见 `.agents/skills/leap-release/SKILL.md`。
