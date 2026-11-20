@@ -94,10 +94,12 @@ public struct SystemApplicationScanner: Sendable {
         if root.pathExtension == "app" {
             return descriptor(for: root, fileManager: fileManager).map { [$0] } ?? []
         }
+        // 不能用 .skipsHiddenFiles：它会在产出阶段就丢掉带 UF_HIDDEN 标志的 .app（Safari 的
+        // /Applications/Safari.app 就是隐藏符号链接），后续解析别名和读取 Bundle 都来不及执行。
         guard let enumerator = fileManager.enumerator(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            options: [.skipsPackageDescendants]
         ) else {
             return []
         }
@@ -105,12 +107,22 @@ public struct SystemApplicationScanner: Sendable {
         var result: [SystemApplicationDescriptor] = []
         for case let sourceURL as URL in enumerator {
             let url = resolvedApplicationURL(for: sourceURL)
-            guard url.pathExtension == "app" else { continue }
+            guard url.pathExtension == "app" else {
+                // 隐藏的普通目录与文件仍然跳过其后代，避免扫描大量噪声。
+                if isHidden(sourceURL) {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
             enumerator.skipDescendants()
             guard let descriptor = descriptor(for: url, fileManager: fileManager) else { continue }
             result.append(descriptor)
         }
         return result
+    }
+
+    private func isHidden(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isHiddenKey]).isHidden) == true
     }
 
     private func resolvedApplicationURL(for url: URL) -> URL {
@@ -209,7 +221,7 @@ public enum SystemApplicationIndexCache {
     }
 
     // 检索字段和分词规则变化后使旧快照失效，避免继续使用旧拼音键。
-    private static let version = 5
+    private static let version = 6
 
     public static func load(from url: URL, fileManager: FileManager = .default) -> [SystemApplicationDescriptor]? {
         guard fileManager.fileExists(atPath: url.path),

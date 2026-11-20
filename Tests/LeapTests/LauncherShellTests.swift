@@ -2,6 +2,99 @@ import Foundation
 import Testing
 @testable import LeapCore
 
+// 临时应用包夹具被多个测试类型共用，放在文件作用域而不是撑大某个测试类型。
+private func makeTemporaryPluginDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("LeapTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+}
+
+private func makeApplication(
+    named name: String,
+    bundleID: String,
+    in directory: URL,
+    backgroundOnly: Bool = false,
+    localizedName: String? = nil,
+    localizedTable: [String: Any]? = nil,
+    isSymbolicLink: Bool = false
+) throws -> URL {
+    // 符号链接形态：真实应用藏在隐藏目录里，仅通过一个隐藏符号链接暴露（Safari 的挂载方式）。
+    let container = isSymbolicLink
+        ? directory.appendingPathComponent(".Targets", isDirectory: true) : directory
+    let application = try makeBundle(
+        named: name, bundleID: bundleID, in: container,
+        backgroundOnly: backgroundOnly, localizedName: localizedName, localizedTable: localizedTable
+    )
+    guard isSymbolicLink else { return application }
+    let link = directory.appendingPathComponent("\(name).app", isDirectory: true)
+    try FileManager.default.createSymbolicLink(
+        atPath: link.path, withDestinationPath: ".Targets/\(name).app"
+    )
+    for path in [link, container] {
+        try setHiddenFlag(at: path)
+        // 自检：真实形态是 flag 在符号链接自身，不在目标上；打不上就失去回归价值。
+        #expect(isHiddenResourceValue(path))
+    }
+    return link
+}
+
+private func makeBundle(
+    named name: String,
+    bundleID: String,
+    in directory: URL,
+    backgroundOnly: Bool,
+    localizedName: String?,
+    localizedTable: [String: Any]?
+) throws -> URL {
+    let application = directory.appendingPathComponent("\(name).app", isDirectory: true)
+    let contents = application.appendingPathComponent("Contents", isDirectory: true)
+    let macOS = contents.appendingPathComponent("MacOS", isDirectory: true)
+    try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
+    let executable = macOS.appendingPathComponent("Runner")
+    try Data("#!/bin/sh\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    var info: [String: Any] = [
+        "CFBundlePackageType": "APPL",
+        "CFBundleExecutable": "Runner",
+        "CFBundleIdentifier": bundleID,
+        "CFBundleName": name
+    ]
+    if backgroundOnly { info["LSBackgroundOnly"] = true }
+    let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+    try data.write(to: contents.appendingPathComponent("Info.plist"))
+    if let localizedName {
+        let localizedDirectory = contents.appendingPathComponent("Resources/zh-Hans.lproj", isDirectory: true)
+        try FileManager.default.createDirectory(at: localizedDirectory, withIntermediateDirectories: true)
+        let localizedInfo = "\"CFBundleDisplayName\" = \"\(localizedName)\";"
+        try Data(localizedInfo.utf8).write(to: localizedDirectory.appendingPathComponent("InfoPlist.strings"))
+    }
+    if let localizedTable {
+        let resources = contents.appendingPathComponent("Resources", isDirectory: true)
+        try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+        let tableData = try PropertyListSerialization.data(
+            fromPropertyList: localizedTable, format: .binary, options: 0
+        )
+        try tableData.write(to: resources.appendingPathComponent("InfoPlist.loctable"))
+    }
+    return application
+}
+
+/// Foundation 没有暴露 UF_HIDDEN，借助 chflags 让测试目录复现真实挂载形态。
+/// 必须带 -h：不带时 chflags 会跟随符号链接，flag 落到目标上（Safari 的 flag 在链接自身）。
+private func setHiddenFlag(at url: URL) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/chflags")
+    process.arguments = ["-h", "hidden", url.path]
+    try process.run()
+    process.waitUntilExit()
+    #expect(process.terminationStatus == 0)
+}
+
+private func isHiddenResourceValue(_ url: URL) -> Bool {
+    (try? url.resourceValues(forKeys: [.isHiddenKey]).isHidden) == true
+}
+
 struct LauncherShellTests {
     @Test("受管路径保持在 Leap 数据目录内")
     func managedPathsStayInsideLeapDirectories() throws {
@@ -263,7 +356,7 @@ struct LauncherShellTests {
         let cacheURL = root.appendingPathComponent("index.json")
         try SystemApplicationIndexCache.save(applications, to: cacheURL)
         #expect(SystemApplicationIndexCache.load(from: cacheURL) == applications)
-        for version in [2, 3, 4] {
+        for version in [2, 3, 4, 5] {
             try Data("{\"version\":\(version),\"applications\":[]}".utf8).write(to: cacheURL)
             #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
         }
@@ -290,6 +383,24 @@ struct LauncherShellTests {
         #expect(application?.name == "微信")
         #expect(application?.matchRank(for: "微信") == 0)
         #expect(application?.matchRank(for: "WeChat") == 0)
+    }
+
+    @Test("隐藏符号链接形态的应用仍会被索引")
+    func systemApplicationScannerIndexesHiddenSymbolicLink() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // Safari 就是这种形态：/Applications/Safari.app 是带 hidden 标志的符号链接，指向隐藏目录。
+        _ = try makeApplication(
+            named: "Safari",
+            bundleID: "com.apple.Safari",
+            in: root,
+            isSymbolicLink: true
+        )
+
+        let applications = SystemApplicationScanner(roots: [root]).scan()
+
+        #expect(applications.map(\.bundleIdentifier) == ["com.apple.Safari"])
+        #expect(applications.first?.matchRank(for: "safari") == 0)
     }
 
     @Test("统一使用记录迁移旧插件历史，清理只在显式调用时发生")
@@ -343,54 +454,6 @@ struct LauncherShellTests {
         #expect(!FileManager.default.fileExists(atPath: try paths.managedPluginDirectory(for: manifest.id).path))
         #expect(!FileManager.default.fileExists(atPath: try paths.trustRecordURL(for: manifest.id).path))
         #expect(InstalledPluginCatalog(paths: paths).loadPlugins().isEmpty)
-    }
-
-    private func makeTemporaryPluginDirectory() throws -> URL {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("LeapTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory
-    }
-
-    private func makeApplication(
-        named name: String,
-        bundleID: String,
-        in directory: URL,
-        backgroundOnly: Bool = false,
-        localizedName: String? = nil,
-        localizedTable: [String: Any]? = nil
-    ) throws -> URL {
-        let application = directory.appendingPathComponent("\(name).app", isDirectory: true)
-        let contents = application.appendingPathComponent("Contents", isDirectory: true)
-        let macOS = contents.appendingPathComponent("MacOS", isDirectory: true)
-        try FileManager.default.createDirectory(at: macOS, withIntermediateDirectories: true)
-        let executable = macOS.appendingPathComponent("Runner")
-        try Data("#!/bin/sh\n".utf8).write(to: executable)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-        var info: [String: Any] = [
-            "CFBundlePackageType": "APPL",
-            "CFBundleExecutable": "Runner",
-            "CFBundleIdentifier": bundleID,
-            "CFBundleName": name
-        ]
-        if backgroundOnly { info["LSBackgroundOnly"] = true }
-        let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
-        try data.write(to: contents.appendingPathComponent("Info.plist"))
-        if let localizedName {
-            let localizedDirectory = contents.appendingPathComponent("Resources/zh-Hans.lproj", isDirectory: true)
-            try FileManager.default.createDirectory(at: localizedDirectory, withIntermediateDirectories: true)
-            let localizedInfo = "\"CFBundleDisplayName\" = \"\(localizedName)\";"
-            try Data(localizedInfo.utf8).write(to: localizedDirectory.appendingPathComponent("InfoPlist.strings"))
-        }
-        if let localizedTable {
-            let resources = contents.appendingPathComponent("Resources", isDirectory: true)
-            try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
-            let tableData = try PropertyListSerialization.data(
-                fromPropertyList: localizedTable, format: .binary, options: 0
-            )
-            try tableData.write(to: resources.appendingPathComponent("InfoPlist.loctable"))
-        }
-        return application
     }
 }
 
