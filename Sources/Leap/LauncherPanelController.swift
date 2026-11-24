@@ -8,8 +8,8 @@ import SwiftUI
 final class LauncherPanelController {
     private static let logger = YQLogger(label: "com.padding.leap/launcher-panel")
     private static let contentWidth: CGFloat = 800
-    // 搜索栏高度 70 加上上下各 24 的内边距，避免首帧布局后再调整窗口高度。
-    private static let initialContentHeight: CGFloat = 118
+    // 搜索栏高度 60 加上上下各 15 的内边距，避免首帧布局后再调整窗口高度。
+    private static let initialContentHeight: CGFloat = 90
     private static let verticalPositionFromTop: CGFloat = 1 / 3
 
     var settingsRequested: ((NSScreen?) -> Void)?
@@ -153,6 +153,9 @@ final class LauncherPanelController {
         // 让原生玻璃呈现窗口后方的内容，避免被 NSPanel 的默认底色遮住。
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // 系统按窗口圆角绘制阴影，而玻璃是 30pt 圆角，角部缝隙会露出多余的一圈；
+        // 启动器不需要阴影，直接关掉。
+        panel.hasShadow = false
         panel.level = .floating
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = false

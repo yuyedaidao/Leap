@@ -8,6 +8,9 @@ struct LauncherView: View {
     private let contentHeightDidChange: (CGFloat) -> Void
     private let showSettings: () -> Void
 
+    // 玻璃与裁剪共用同一个圆角，避免两处数值漂移后重新露出角部缝隙。
+    private let cornerRadius: CGFloat = 30
+
     @FocusState private var isSearchFieldFocused: Bool
     @State private var selectedRecentItemID: LauncherItem.ID?
 
@@ -62,11 +65,13 @@ struct LauncherView: View {
                 }
             }
         }
-        .padding([.leading, .trailing, .top], 15)
-        .padding(.bottom, 15)
+        .padding(15)
         .frame(width: 800)
         // 整个启动器共用一层原生玻璃，避免列表和插件内容叠加玻璃影响可读性。
-        .glassEffect(.regular, in: UnevenRoundedRectangle(topLeadingRadius: 30, bottomLeadingRadius: 30, bottomTrailingRadius: 30, topTrailingRadius: 30, style: .continuous))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
+        // 玻璃会向外溢出一层淡色绘制，窗口按自己的圆角把它硬裁出来，四角就会露出一圈灰雾；
+        // 按玻璃形状再裁一刀，形状外的像素不再有机会画出来。
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .ignoresSafeArea()
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
