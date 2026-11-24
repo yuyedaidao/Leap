@@ -103,6 +103,52 @@ final class LeapUITests: XCTestCase {
     }
 
     @MainActor
+    func testSelectedItemPreviewButtonRunsSelectedResult() throws {
+        let supportDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LeapUITests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: supportDirectory) }
+
+        let sourceDirectory = supportDirectory.appendingPathComponent("PreviewResults", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        let pluginID = "com.padding.leap.preview-\(UUID().uuidString.lowercased())"
+        let manifest = PluginManifest(
+            id: pluginID,
+            name: "PreviewResults",
+            version: "1.0.0",
+            runtime: .javascript,
+            entry: "main.js",
+            commands: (1...3).map { .init(id: "result.\($0)", title: "preview \($0)") }
+        )
+        try JSONEncoder().encode(manifest).write(to: sourceDirectory.appendingPathComponent("manifest.json"))
+        try Data("leap.onInvoke(() => \"已执行\");".utf8).write(to: sourceDirectory.appendingPathComponent("main.js"))
+
+        let paths = AppPaths(applicationSupportDirectory: supportDirectory, resourceDirectory: supportDirectory)
+        let installer = PluginInstaller(paths: paths)
+        try installer.install(try installer.inspect(sourceDirectory: sourceDirectory), confirmed: true)
+
+        let app = XCUIApplication()
+        app.launchArguments += ["-leap-testing-support-directory", supportDirectory.path]
+        app.launch()
+
+        let searchField = app.textFields["launcher.searchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
+        // 空输入时右侧仍是设置入口，预览只在有搜索结果后出现。
+        XCTAssertTrue(app.buttons["launcher.settingsButton"].exists)
+        XCTAssertFalse(app.buttons["launcher.selectedItemButton"].exists)
+
+        searchField.click()
+        searchField.typeText("result.1")
+        let firstCommand = app.buttons["launcher.command.\(pluginID)/result.1"]
+        XCTAssertTrue(firstCommand.waitForExistence(timeout: 5))
+
+        let preview = app.buttons["launcher.selectedItemButton"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.buttons["launcher.settingsButton"].exists)
+        preview.click()
+        XCTAssertTrue(app.staticTexts["launcher.pluginResult"].waitForExistence(timeout: 5), app.debugDescription)
+    }
+
+    @MainActor
     func testLauncherHeightTopAnchorAndPresentationReset() throws {
         let supportDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("LeapUITests-\(UUID().uuidString)", isDirectory: true)
