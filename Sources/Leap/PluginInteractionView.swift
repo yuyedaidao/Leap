@@ -72,7 +72,7 @@ struct PluginHeaderTag: View {
                     PluginLoadingRing(isSelecting: isSelecting)
                 }
             }
-            .frame(width: 28, height: 28)
+//            .frame(width: 28, height: 28)
             HStack(spacing: 6) {
                 Text(name)
                     .accessibilityIdentifier("plugin.activeName")
@@ -95,8 +95,9 @@ struct PluginHeaderTag: View {
             .accessibilityIdentifier("plugin.backButton")
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+//        .padding(.vertical, 8)
+        .frame(height: 40)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .help(title.map { "\(name) / \($0)" } ?? name)
     }
 }

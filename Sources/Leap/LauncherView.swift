@@ -61,10 +61,11 @@ struct LauncherView: View {
                 }
             }
         }
-        .padding()
+        .padding([.leading, .trailing, .top], 15)
+        .padding(.bottom, 15)
         .frame(width: 800)
         // 整个启动器共用一层原生玻璃，避免列表和插件内容叠加玻璃影响可读性。
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        .glassEffect(.regular, in: UnevenRoundedRectangle(topLeadingRadius: 30, bottomLeadingRadius: 30, bottomTrailingRadius: 30, topTrailingRadius: 30, style: .continuous))
         .ignoresSafeArea()
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
@@ -149,6 +150,8 @@ private struct LauncherSearchHeader: View {
     var exitInteraction: () -> Void = {}
     var exitShellRun: () -> Void = {}
 
+    let defaultHeight: CGFloat = 60
+    let settingsHeight: CGFloat = 40
     var body: some View {
         GeometryReader { geometry in
             HStack(alignment: .center, spacing: 12) {
@@ -167,7 +170,7 @@ private struct LauncherSearchHeader: View {
                     @Bindable var interaction = interaction
                     PluginInteractionTag(session: interaction, exit: exitInteraction)
                         // 扣除边距、设置按钮和间距后，限制标签宽度以保留参数输入空间。
-                        .frame(maxWidth: max(0, geometry.size.width - 80) * 0.45, alignment: .leading)
+                        .frame(maxWidth: max(0, geometry.size.width - 80) * 0.45, maxHeight: .infinity, alignment: .leading)
                         .fixedSize(horizontal: true, vertical: false)
                     if interaction.configuration.inputEnabled {
                         PluginParameterInput(
@@ -184,7 +187,7 @@ private struct LauncherSearchHeader: View {
                         Spacer()
                     }
                 } else {
-                    TextField("下一步，你来定", text: $query)
+                    TextField("下一步，从这里开始", text: $query)
                         .accessibilityIdentifier("launcher.searchField")
                         .textFieldStyle(.plain)
                         .autocorrectionDisabled()
@@ -210,8 +213,7 @@ private struct LauncherSearchHeader: View {
                     exitInteraction()
                     showSettings()
                 } label: {
-                    let radius: CGFloat = 20
-                    let bWidth = radius * 2
+                    let bWidth = settingsHeight
                     // 图标源图已裁掉透明留白，按比例内缩即可，不能再放大填满（会被圆形遮罩切掉主体）。
                     let iWidth = (bWidth * 0.62).rounded()
                     ZStack {
@@ -230,11 +232,12 @@ private struct LauncherSearchHeader: View {
                 .accessibilityIdentifier("launcher.settingsButton")
                 .accessibilityLabel("设置")
             }
-            .padding(.horizontal, 14)
-            .frame(height: 70)
+            .padding(.trailing, defaultHeight / 2 - settingsHeight / 2)
+            .padding(.leading, settingsHeight / 2)
+            .frame(height: defaultHeight)
         }
-        .frame(height: 70)
-        .background(.tertiary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .frame(height: defaultHeight)
+        .background(.tertiary.opacity(0.25), in: RoundedRectangle(cornerRadius: defaultHeight / 2, style: .continuous))
         .task(id: interaction?.id) {
             guard interaction == nil else { return }
             // 等搜索框重新挂载后再交接焦点，避免关闭按钮保留键盘输入。
@@ -242,29 +245,6 @@ private struct LauncherSearchHeader: View {
             await Task.yield()
             guard !Task.isCancelled else { return }
             isFocused.wrappedValue = true
-        }
-    }
-}
-
-#Preview {
-    LauncherSearchHeaderPreview()
-}
-
-private struct LauncherSearchHeaderPreview: View {
-    @FocusState private var isFocused: Bool
-    @State private var query = "hello"
-
-    var body: some View {
-        LauncherSearchHeader(
-            query: $query,
-            isFocused: $isFocused,
-            showSettings: {},
-            submit: {},
-            moveSearchSelection: { _ in false },
-            moveRecentSelection: { _ in false }
-        )
-        .onAppear {
-            isFocused = true
         }
     }
 }
@@ -362,10 +342,10 @@ private struct CommandCard: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity, minHeight: 76, alignment: .center)
-            .padding(.vertical, 8)
-            .background(isSelected ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .frame(maxWidth: .infinity, minHeight: 66, alignment: .center)
+            .padding(6)
+            .background(isSelected ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(item.accessibilityID)
@@ -502,4 +482,41 @@ private struct ShellRunOutput: View {
             .accessibilityIdentifier("launcher.shellOutput")
         }
     }
+}
+
+private struct LauncherSearchHeaderPreview: View {
+    @FocusState private var isFocused: Bool
+    @State private var query = "hello"
+
+    var body: some View {
+        LauncherSearchHeader(
+            query: $query,
+            isFocused: $isFocused,
+            showSettings: {},
+            submit: {},
+            moveSearchSelection: { _ in false },
+            moveRecentSelection: { _ in false }
+        )
+        .onAppear {
+            isFocused = true
+        }
+    }
+}
+
+private struct LauncherViewPreview: View {
+    private let paths: AppPaths? = try? AppPaths()
+
+    var body: some View {
+        // 预览只用于目视检查，资源目录不可用时直接显示占位而不是崩溃。
+        if let paths {
+            LauncherView(model: LauncherModel(paths: paths))
+                .padding(50)
+        } else {
+            Text("无法定位 Leap 资源目录")
+        }
+    }
+}
+
+#Preview {
+    LauncherViewPreview()
 }
