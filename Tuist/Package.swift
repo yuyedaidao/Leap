@@ -9,7 +9,8 @@ import ProjectDescription
 let packageSettings = PackageSettings(
     targetSettings: [
         "YQLogger": ["MACOSX_DEPLOYMENT_TARGET": "26.0"],
-        "Logging": ["MACOSX_DEPLOYMENT_TARGET": "26.0"]
+        "Logging": ["MACOSX_DEPLOYMENT_TARGET": "26.0"],
+        "BorderBeam": ["MACOSX_DEPLOYMENT_TARGET": "26.0"]
     ]
 )
 #endif
@@ -18,6 +19,7 @@ let package = Package(
     name: "Leap",
     dependencies: [
         .package(url: "https://github.com/yuyedaidao/YQLogger.git", branch: "main"),
-        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.1")
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.1"),
+        .package(url: "https://github.com/ismnoiet/border-beam-ios.git", branch: "main")
     ]
 )

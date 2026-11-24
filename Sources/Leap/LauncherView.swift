@@ -1,4 +1,5 @@
 import AppKit
+import BorderBeam
 import LeapCore
 import SwiftUI
 
@@ -152,6 +153,24 @@ private struct LauncherSearchHeader: View {
 
     let defaultHeight: CGFloat = 60
     let settingsHeight: CGFloat = 40
+    // 空输入时播放一圈光带提示可以输入；由 beamTrigger 驱动，每次回到“可搜索”状态（唤起、退出交互、清空输入）各播一次。
+    @State private var beamActive = false
+
+    // 光带的触发条件：唤起计数、胶囊是否被插件交互或前台 Shell 占用、输入是否为空。
+    private struct BeamTrigger: Hashable {
+        let focusRequestID: Int
+        let isOccupied: Bool
+        let queryIsEmpty: Bool
+    }
+
+    private var beamTrigger: BeamTrigger {
+        BeamTrigger(
+            focusRequestID: focusRequestID,
+            isOccupied: interaction != nil || shellCommand != nil,
+            queryIsEmpty: query.isEmpty
+        )
+    }
+
     var body: some View {
         GeometryReader { geometry in
             HStack(alignment: .center, spacing: 12) {
@@ -163,12 +182,14 @@ private struct LauncherSearchHeader: View {
                         title: shellCommand.pluginName == shellCommand.title ? nil : shellCommand.title,
                         exit: exitShellRun
                     )
+                    .padding(.leading, 10)
                     // 插件名过长时截断，不能把右侧设置按钮顶出窗口。
                     .frame(maxWidth: max(0, geometry.size.width - 80) * 0.45, alignment: .leading)
                     Spacer()
                 } else if let interaction {
                     @Bindable var interaction = interaction
                     PluginInteractionTag(session: interaction, exit: exitInteraction)
+                        .padding(.leading, 10)
                         // 扣除边距、设置按钮和间距后，限制标签宽度以保留参数输入空间。
                         .frame(maxWidth: max(0, geometry.size.width - 80) * 0.45, maxHeight: .infinity, alignment: .leading)
                         .fixedSize(horizontal: true, vertical: false)
@@ -193,6 +214,7 @@ private struct LauncherSearchHeader: View {
                         .autocorrectionDisabled()
                         .font(.title)
                         .focused(isFocused)
+                        .padding(.leading, settingsHeight / 2)
                         .onSubmit(submit)
                         .onKeyPress(.upArrow) {
                             moveSearchSelection(-1) ? .handled : .ignored
@@ -233,11 +255,32 @@ private struct LauncherSearchHeader: View {
                 .accessibilityLabel("设置")
             }
             .padding(.trailing, defaultHeight / 2 - settingsHeight / 2)
-            .padding(.leading, settingsHeight / 2)
             .frame(height: defaultHeight)
         }
         .frame(height: defaultHeight)
         .background(.tertiary.opacity(0.25), in: RoundedRectangle(cornerRadius: defaultHeight / 2, style: .continuous))
+        .borderBeam(
+            shape: .rounded(10),
+            style: .line,
+            direction: .rightToLeft,
+            active: beamActive,
+            colors: BeamPalette.colorful,
+            intensity: 0.5
+        )
+        .task(id: beamTrigger) {
+            // 只有唤起且输入为空、胶囊没被插件交互或前台 Shell 占用时才提示；
+            // 条件失效的每条出口都要熄灭，否则光带会停在常亮。
+            guard interaction == nil, shellCommand == nil, query.isEmpty else {
+                beamActive = false
+                return
+            }
+            beamActive = true
+            // .line 模式一次往返约 2 秒，多留出库自带的淡出时间后熄灭。
+            try? await Task.sleep(for: .seconds(3))
+            // 被新条件取消时不抢着熄灭，交给接管的新任务决定亮或灭。
+            guard !Task.isCancelled else { return }
+            beamActive = false
+        }
         .task(id: interaction?.id) {
             guard interaction == nil else { return }
             // 等搜索框重新挂载后再交接焦点，避免关闭按钮保留键盘输入。

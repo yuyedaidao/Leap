@@ -1,6 +1,15 @@
 {
-  "originHash" : "4f8fa46a85e77af0af8d1b2522a979791731bfc2f0108f6ad1cf257a3afbc451",
+  "originHash" : "59f9b929e26f87372e026c0350b5fc8776a8c547356264436b82116a1e9ac7c9",
   "pins" : [
+    {
+      "identity" : "border-beam-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ismnoiet/border-beam-ios.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "a11d1b938b1cc8efad02e942f7590a0156bbd7da"
+      }
+    },
     {
       "identity" : "sparkle",
       "kind" : "remoteSourceControl",

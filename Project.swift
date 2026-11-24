@@ -49,7 +49,8 @@ let project = Project(
             dependencies: [
                 .target(name: "LeapCore"),
                 .external(name: "YQLogger"),
-                .external(name: "Sparkle")
+                .external(name: "Sparkle"),
+                .external(name: "BorderBeam")
             ],
             settings: .settings(base: [
                 "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon"
