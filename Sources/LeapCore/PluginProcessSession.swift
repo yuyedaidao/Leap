@@ -153,7 +153,7 @@ public final class PluginProcessSession: @unchecked Sendable {
 
     public func request(
         _ method: String, commandID: String, query: String, itemID: String? = nil,
-        cancellation: PluginInvocationCancellation? = nil, timeout: TimeInterval = 3,
+        cancellation: PluginInvocationCancellation? = nil, timeout: TimeInterval = 60,
         onList: ListUpdate? = nil, onLoading: LoadingUpdate? = nil
     ) async throws -> PluginValue {
         try await withCheckedThrowingContinuation { continuation in

@@ -93,6 +93,21 @@ struct PluginInteractionProcessTests {
         }
     }
 
+    @Test("默认业务期限允许超过原三秒的异步任务并复用会话")
+    func defaultDeadlineAllowsSlowAsyncCallback() async throws {
+        let (process, directory) = try session(script: """
+        leap.onInvoke(async ({query}) => {
+          await new Promise(resolve => setTimeout(resolve, query === 'slow' ? 3200 : 0));
+          return query;
+        });
+        """)
+        defer { process.close(); try? FileManager.default.removeItem(at: directory) }
+        _ = try await process.request("enter", commandID: "test", query: "")
+        #expect(try await process.request("invoke", commandID: "test", query: "slow").string == "slow")
+        #expect(try await process.request("invoke", commandID: "test", query: "next").string == "next")
+        #expect(!process.isClosed)
+    }
+
     @Test("取消信号结束异步查询，过期更新不发布，新输入正常执行")
     func cancellationAndStreaming() async throws {
         let (process, directory) = try session(script: """

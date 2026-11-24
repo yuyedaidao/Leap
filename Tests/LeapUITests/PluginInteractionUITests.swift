@@ -62,7 +62,11 @@ final class PluginInteractionUITests: XCTestCase {
         let listFrame = app.descendants(matching: .any)["plugin.results"].firstMatch.frame
         let panelFrame = app.dialogs["com.padding.leap.launcher"].frame
         parameter.typeText("1")
-        assertLoadingRing(app)
+        assertLoadingIndicator(app)
+        let loadingScreenshot = XCTAttachment(screenshot: app.screenshot())
+        loadingScreenshot.name = "插件标签加载光带"
+        loadingScreenshot.lifetime = .keepAlways
+        add(loadingScreenshot)
         XCTAssertEqual(app.descendants(matching: .any)["plugin.results"].firstMatch.frame, listFrame)
         XCTAssertEqual(app.dialogs["com.padding.leap.launcher"].frame, panelFrame)
         let queryFinished = XCTNSPredicateExpectation(
@@ -80,7 +84,7 @@ final class PluginInteractionUITests: XCTestCase {
         XCTAssertLessThan(app.buttons["plugin.result.1"].frame.height, 85)
         // 第十项在滚动区域之外，验证快捷键由窗口处理而非行是否已挂载。
         parameter.typeKey("0", modifierFlags: .command)
-        assertLoadingRing(app)
+        assertLoadingIndicator(app)
         let selected = app.staticTexts["plugin.listFeedback"]
         let completed = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label == %@ OR value == %@", "已选择 9", "已选择 9"), object: selected
@@ -439,15 +443,12 @@ final class PluginInteractionUITests: XCTestCase {
 
 private extension PluginInteractionUITests {
     @MainActor
-    func assertLoadingRing(_ app: XCUIApplication) {
-        let ring = app.descendants(matching: .any)["plugin.loadingIndicator"]
-        XCTAssertTrue(ring.waitForExistence(timeout: 5), app.debugDescription)
-        // 圆弧的辅助功能边界随旋转角度变化，不等同于固定 32pt 的布局框。
-        XCTAssertGreaterThan(ring.frame.width, 24)
-        XCTAssertLessThanOrEqual(ring.frame.width, 34)
-        XCTAssertGreaterThan(ring.frame.height, 24)
-        XCTAssertLessThanOrEqual(ring.frame.height, 34)
-        XCTAssertLessThan(ring.frame.maxX, app.textFields["plugin.parameterInput"].frame.minX)
+    func assertLoadingIndicator(_ app: XCUIApplication) {
+        let indicator = app.descendants(matching: .any)["plugin.loadingIndicator"]
+        XCTAssertTrue(indicator.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(indicator.frame.width, 28, accuracy: 1)
+        XCTAssertEqual(indicator.frame.height, 28, accuracy: 1)
+        XCTAssertLessThan(indicator.frame.maxX, app.textFields["plugin.parameterInput"].frame.minX)
         XCTAssertFalse(app.activityIndicators["plugin.queryProgress"].exists)
         XCTAssertFalse(app.activityIndicators["plugin.selectionProgress"].exists)
     }

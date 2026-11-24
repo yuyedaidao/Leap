@@ -1,4 +1,5 @@
 import AppKit
+import BorderBeam
 import ImageIO
 import LeapCore
 import SwiftUI
@@ -63,16 +64,11 @@ struct PluginHeaderTag: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            // 图标装饰与可访问的加载状态分开，避免隐藏图标时同时隐藏状态说明。
-            ZStack {
-                CommandIcon(iconURL: iconURL, runtime: runtime)
-                    .frame(width: 28, height: 28)
-                    .accessibilityHidden(true)
-                if showsLoading {
-                    PluginLoadingRing(isSelecting: isSelecting)
-                }
-            }
-//            .frame(width: 28, height: 28)
+            CommandIcon(iconURL: iconURL, runtime: runtime)
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(!showsLoading)
+                .accessibilityLabel(isSelecting ? "正在执行" : "正在查询")
+                .accessibilityIdentifier("plugin.loadingIndicator")
             HStack(spacing: 6) {
                 Text(name)
                     .accessibilityIdentifier("plugin.activeName")
@@ -98,6 +94,14 @@ struct PluginHeaderTag: View {
 //        .padding(.vertical, 8)
         .frame(height: 40)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .borderBeam(
+            shape: .rounded(20),
+            style: .small,
+            direction: .rightToLeft,
+            active: showsLoading,
+            colors: BeamPalette.colorful,
+            intensity: 0.5
+        )
         .help(title.map { "\(name) / \($0)" } ?? name)
     }
 }
@@ -181,25 +185,6 @@ private struct ImageThumbnail: View {
         let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
         ImageThumbnailCache.images.setObject(image, forKey: key)
         return image
-    }
-}
-
-private struct PluginLoadingRing: View {
-    let isSelecting: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var rotating = false
-
-    var body: some View {
-        Circle().trim(from: 0, to: 0.75)
-            .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-            .frame(width: 32, height: 32)
-            .rotationEffect(.degrees(rotating && !reduceMotion ? 360 : 0))
-            .animation(reduceMotion ? nil : .linear(duration: 1).repeatForever(autoreverses: false), value: rotating)
-            .onAppear { rotating = true }
-            .allowsHitTesting(false)
-            .accessibilityElement()
-            .accessibilityLabel(isSelecting ? "正在执行" : "正在查询")
-            .accessibilityIdentifier("plugin.loadingIndicator")
     }
 }
 
