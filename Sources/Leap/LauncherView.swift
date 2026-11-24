@@ -33,6 +33,8 @@ struct LauncherView: View {
                 isFocused: $isSearchFieldFocused,
                 showSettings: showSettings,
                 submit: activateSelectedItem,
+                activateSelected: activateSelectedItem,
+                previewItem: previewItem,
                 moveSearchSelection: moveSearchSelection,
                 moveRecentSelection: moveRecentSelection,
                 interaction: model.interaction,
@@ -97,6 +99,12 @@ struct LauncherView: View {
         !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !model.searchResults.isEmpty
     }
 
+    /// 有搜索结果时按钮预览即将执行的项；插件交互与前台 Shell 占用胶囊时让位给设置入口。
+    private var previewItem: LauncherItem? {
+        guard hasSearchResults, model.interaction == nil, model.shellRunCommand == nil else { return nil }
+        return model.searchResults.first(where: { $0.id == model.selectedSearchResultID }) ?? model.searchResults.first
+    }
+
     private func resetSelections() {
         model.selectedSearchResultID = model.searchResults.first?.id
         selectedRecentItemID = model.recentItems.first?.id
@@ -147,6 +155,8 @@ private struct LauncherSearchHeader: View {
     let isFocused: FocusState<Bool>.Binding
     let showSettings: () -> Void
     let submit: () -> Void
+    var activateSelected: () -> Void = {}
+    var previewItem: LauncherItem?
     let moveSearchSelection: (Int) -> Bool
     let moveRecentSelection: (Int) -> Bool
     var interaction: PluginInteractionSession?
@@ -237,8 +247,12 @@ private struct LauncherSearchHeader: View {
                 }
 
                 Button {
-                    exitInteraction()
-                    showSettings()
+                    if previewItem == nil {
+                        exitInteraction()
+                        showSettings()
+                    } else {
+                        activateSelected()
+                    }
                 } label: {
                     let bWidth = settingsHeight
                     // 图标源图已裁掉透明留白，按比例内缩即可，不能再放大填满（会被圆形遮罩切掉主体）。
@@ -246,18 +260,23 @@ private struct LauncherSearchHeader: View {
                     ZStack {
                         Circle()
                             .fill(.quaternary)
-                        Image("LauncherSettingsIcon")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: iWidth, height: iWidth)
+                        if let previewItem {
+                            LauncherItemIcon(item: previewItem)
+                                .frame(width: iWidth, height: iWidth)
+                        } else {
+                            Image("LauncherSettingsIcon")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: iWidth, height: iWidth)
+                        }
                     }
                     .frame(width: bWidth, height: bWidth)
                     .clipShape(Circle())
                     .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityIdentifier("launcher.settingsButton")
-                .accessibilityLabel("设置")
+                .accessibilityIdentifier(previewItem == nil ? "launcher.settingsButton" : "launcher.selectedItemButton")
+                .accessibilityLabel(previewItem.map { "打开 \($0.title)" } ?? "设置")
             }
             .padding(.trailing, defaultHeight / 2 - settingsHeight / 2)
             .frame(height: defaultHeight)
