@@ -28,8 +28,8 @@ let project = Project(
             deploymentTargets: .macOS("26.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "Leap",
-                "CFBundleShortVersionString": "1.1.1",
-                "CFBundleVersion": "13",
+                "CFBundleShortVersionString": "1.1.2",
+                "CFBundleVersion": "14",
                 // 声明简体中文，让 Sparkle 等系统框架按中文选本地化资源，而不是回落到英文。
                 "CFBundleLocalizations": ["zh-Hans"],
                 "SUFeedURL": "https://github.com/yuyedaidao/Leap/releases/latest/download/appcast.xml",
