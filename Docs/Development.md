@@ -31,6 +31,8 @@ swiftlint
 
 发布脚本对最终公证 DMG 生成带签名的 `appcast.xml`，一起上传并回读校验后才公开；公开后还会匿名检查 latest 订阅与本次产物一致。每次正式发行需递增版本和 `CFBundleVersion`；测试版不发布正式订阅。更新源为本仓库最新正式 Release 的 `appcast.xml` 附件，修改发行仓库时也需同步应用订阅地址。
 
+Sparkle 界面语言取自应用声明的本地化：`Project.swift` 的 `CFBundleLocalizations` 声明了 `zh-Hans`，系统语言为简体中文时更新弹窗即显示中文；改这个键同样要重新发行才生效。
+
 ## 一键打出 DMG
 
 入口是 `Scripts/publish-release.py`，一条命令完成运行时准备、Tuist 生成、SwiftLint、Release 构建、单测和 DMG 打包。
