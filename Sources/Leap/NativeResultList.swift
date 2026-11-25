@@ -7,6 +7,9 @@ struct NativeResultList<Item: Identifiable, Row: View>: View {
     @ViewBuilder let row: (Item, Int) -> Row
     @State private var rowHeights: [Item.ID: CGFloat] = [:]
 
+    private let minHeight: CGFloat = 52
+    private let rowSpacing: CGFloat = 6
+    
     var body: some View {
         ScrollViewReader { proxy in
             List { rows }
@@ -14,7 +17,7 @@ struct NativeResultList<Item: Identifiable, Row: View>: View {
             .padding(.horizontal, -8) // 与 macOS List 保持一致
             .scrollContentBackground(.hidden)
             .contentMargins(0, for: .scrollContent)
-            .environment(\.defaultMinListRowHeight, 52)
+            .environment(\.defaultMinListRowHeight, minHeight)
             .frame(height: visibleHeight)
             .onChange(of: selectedID) { _, id in
                 if let id { proxy.scrollTo(id) }
@@ -31,8 +34,8 @@ struct NativeResultList<Item: Identifiable, Row: View>: View {
         guard !items.isEmpty else { return 0 }
         // macOS List 的 contentSize 可能不小于视口；测量行高才能在结果减少时收缩。
         guard items.count < 8 else { return 444 }
-        let height = items.reduce(CGFloat(0)) { $0 + (rowHeights[$1.id] ?? 52) }
-        return min(ceil(height + CGFloat(items.count - 1) * 4), 444)
+        let height = items.reduce(CGFloat(0)) { $0 + (rowHeights[$1.id] ?? minHeight) }
+        return min(ceil(height + CGFloat(items.count - 1) * rowSpacing), 444)
     }
 
     private var rows: some View {
@@ -42,7 +45,7 @@ struct NativeResultList<Item: Identifiable, Row: View>: View {
                     guard height.isFinite, height > 0, rowHeights[item.id] != height else { return }
                     rowHeights[item.id] = height
                 }
-                .padding(.bottom, index == items.count - 1 ? 0 : 4)
+                .padding(.bottom, index == items.count - 1 ? 0 : rowSpacing)
                 // 清除系统行内边距，使实际行高与列表高度计算一致。
                 .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)

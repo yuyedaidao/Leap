@@ -364,7 +364,7 @@ private struct LauncherSearchResults: View {
                                 shortcut: LauncherListShortcut.hint(at: index),
                                 identifierPrefix: "launcher", itemID: item.id,
                                 activate: { activate(item) }) {
-                    LauncherItemIcon(item: item).frame(width: 32, height: 32)
+                    LauncherItemIcon(item: item).frame(width: 40, height: 40)
                 }
                 .accessibilityIdentifier(item.accessibilityID)
                 .accessibilityLabel(item.title)
