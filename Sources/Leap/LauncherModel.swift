@@ -17,15 +17,15 @@ enum LauncherItem: Identifiable {
 
     var title: String {
         switch self {
-        case let .application(application): application.name
+        case let .application(application): application.displayName ?? application.name
         case let .plugin(command): command.title
         }
     }
 
-    var subtitle: String {
+    /// 应用不再显示副标题：Bundle ID 对用户没有意义，同名副本已由包名标题区分。
+    var subtitle: String? {
         switch self {
-        case let .application(application):
-            application.bundleIdentifier.map { "应用 · \($0)" } ?? "应用"
+        case .application: nil
         case let .plugin(command): command.pluginName
         }
     }
@@ -39,7 +39,7 @@ enum LauncherItem: Identifiable {
 
     var accessibilityID: String {
         switch self {
-        case let .application(application): "launcher.application.\(application.id)"
+        case let .application(application): "launcher.application.\(application.bundleIdentifier ?? application.id)"
         case let .plugin(command): "launcher.command.\(command.id)"
         }
     }
@@ -366,7 +366,9 @@ final class LauncherModel {
 
 
     private func activate(_ application: SystemApplicationDescriptor) {
-        invocationState = .running(application.name)
+        // 运行/失败反馈沿用标题，否则两份 Xcode 分不清是哪一份。
+        let displayName = application.displayName ?? application.name
+        invocationState = .running(displayName)
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -376,8 +378,8 @@ final class LauncherModel {
                 rebuildRecentItems()
                 applicationDidLaunch?()
             } catch {
-                Self.logger.error("启动应用失败：\(application.name)，\(error.localizedDescription)。")
-                invocationState = .failed("无法启动 \(application.name)：\(error.localizedDescription)")
+                Self.logger.error("启动应用失败：\(displayName)，\(error.localizedDescription)。")
+                invocationState = .failed("无法启动 \(displayName)：\(error.localizedDescription)")
             }
         }
     }

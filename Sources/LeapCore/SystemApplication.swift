@@ -3,6 +3,8 @@ import Foundation
 
 public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Sendable {
     public let name: String
+    /// 显示用名称：与 Finder 看到的字一致（系统语言本地化名，否则包名）。检索只用 `name`。
+    public let displayName: String?
     public let alternateNames: [String]
     public let bundleIdentifier: String?
     public let path: String
@@ -11,12 +13,20 @@ public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Send
     public let pinyinInitials: String
     private let searchIndexes: [SearchTextIndex]
 
-    public var id: String { bundleIdentifier ?? path }
+    /// 路径唯一：同一 Bundle ID 可能存在多份副本（如多个 Xcode 版本）。
+    public var id: String { path }
     public var url: URL { URL(fileURLWithPath: path) }
     public var historyKey: String { path }
 
-    public init(name: String, bundleIdentifier: String?, url: URL, alternateNames: [String] = []) {
+    public init(
+        name: String,
+        bundleIdentifier: String?,
+        url: URL,
+        alternateNames: [String] = [],
+        displayName: String? = nil
+    ) {
         self.name = name
+        self.displayName = displayName
         self.bundleIdentifier = bundleIdentifier
         path = url.standardizedFileURL.resolvingSymlinksInPath().path
         normalizedName = Self.normalize(name)
@@ -37,14 +47,19 @@ public struct SystemApplicationDescriptor: Codable, Hashable, Identifiable, Send
     }
 
     /// 数值越小表示文本匹配越直接，调用方再以使用记录解决同级排序。
+    /// 非首选语言的别名（loctable 里的几十种外语名字）只做兜底：任何本名匹配都排在它们之前。
     public func matchRank(for query: String) -> Int? {
-        (searchIndexes.compactMap { $0.matchRank(for: query) } +
-            [SearchTextIndex.identifierRank(bundleIdentifier, for: query)].compactMap { $0 }).min()
+        let primary = [searchIndexes[0].matchRank(for: query),
+                       SearchTextIndex.identifierRank(bundleIdentifier, for: query)].compactMap { $0 }.min()
+        if let primary { return primary }
+        return searchIndexes.dropFirst().compactMap { $0.matchRank(for: query) }.min()
+            .map { $0 + SearchMatchRank.aliasOffset }
     }
 
     public static func normalize(_ value: String) -> String {
         SearchTextIndex.normalize(value)
     }
+
 }
 
 public struct SystemApplicationScanner: Sendable {
@@ -74,17 +89,22 @@ public struct SystemApplicationScanner: Sendable {
     }
 
     public func scan(fileManager: FileManager = .default) -> [SystemApplicationDescriptor] {
-        var indexedApplications: [String: SystemApplicationDescriptor] = [:]
+        var result: [SystemApplicationDescriptor] = []
+        // roots 的顺序定义重复 Bundle ID 的优先级：用户、全局、系统。
+        var claimedIdentifiers: Set<String> = []
         for root in roots {
+            // 同一 root 内同 Bundle ID 的不同副本（Xcode 多版本）都要保留，只按路径去重。
+            var rootIdentifiers: Set<String> = []
+            var rootPaths: Set<String> = []
             for application in applications(in: root, fileManager: fileManager) {
-                // roots 的顺序定义重复 Bundle ID 的优先级：用户、全局、系统。
                 let key = application.bundleIdentifier ?? application.path
-                if indexedApplications[key] == nil {
-                    indexedApplications[key] = application
-                }
+                guard !claimedIdentifiers.contains(key), rootPaths.insert(application.path).inserted else { continue }
+                rootIdentifiers.insert(key)
+                result.append(application)
             }
+            claimedIdentifiers.formUnion(rootIdentifiers)
         }
-        return indexedApplications.values.sorted {
+        return result.sorted {
             $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
@@ -144,42 +164,55 @@ public struct SystemApplicationScanner: Sendable {
         }
 
         let localizedNames = localizedNames(in: bundle)
+        let allLocalizedNames = localizedNames.preferred + localizedNames.others
         // 不调用 localizedInfoDictionary：损坏的 loctable 可能触发无法用 Swift catch 捕获的系统异常。
-        let localizedInfo = localizedNames.isEmpty
+        let localizedInfo = allLocalizedNames.isEmpty
             ? propertyListDictionary(at: bundle.url(forResource: "InfoPlist", withExtension: "strings")) : [:]
-        let name = localizedNames.first
-            ?? (localizedInfo["CFBundleDisplayName"] as? String)
-            ?? (localizedInfo["CFBundleName"] as? String)
-            ?? (info["CFBundleDisplayName"] as? String)
-            ?? (info["CFBundleName"] as? String)
-            ?? url.deletingPathExtension().lastPathComponent
+        // CFBundleDisplayName 可能被显式写成空串（如 Copilot for Xcode），空串不能当中文名用。
+        let candidates = [
+            allLocalizedNames.first,
+            localizedInfo["CFBundleDisplayName"] as? String,
+            localizedInfo["CFBundleName"] as? String,
+            info["CFBundleDisplayName"] as? String,
+            info["CFBundleName"] as? String
+        ].compactMap { $0 }.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        // Finder 规则：没有当前系统语言的本地化名时显示包名（Xcode-27.2.0.app → Xcode-27.2.0）。
+        let packageName = url.deletingPathExtension().lastPathComponent
+        let name = candidates.first ?? packageName
+        let displayName = localizedNames.preferred.first ?? packageName
         let alternateNames = [
             info["CFBundleDisplayName"] as? String,
             info["CFBundleName"] as? String
-        ].compactMap { $0 } + localizedNames
+        ].compactMap { $0 } + allLocalizedNames
         return SystemApplicationDescriptor(
             name: name,
             bundleIdentifier: bundle.bundleIdentifier,
             url: url,
-            alternateNames: alternateNames
+            alternateNames: alternateNames,
+            displayName: displayName == name ? nil : displayName
         )
     }
 
-    private func localizedNames(in bundle: Bundle) -> [String] {
+    /// 本地化名称按「是否命中系统语言」分成两组：`preferred` 决定显示名，`others` 只作搜索别名。
+    private func localizedNames(in bundle: Bundle) -> (preferred: [String], others: [String]) {
         // 系统应用可能只在 loctable 中保存名称；每次扫描只解析一次，共享给各语言。
         let table = propertyListDictionary(at: bundle.url(forResource: "InfoPlist", withExtension: "loctable"))
         let tableLocalizations = table.keys.filter {
             $0 != "LocProvenance" && $0 != "NonLocalized" && table[$0] is [String: Any]
         }
         let availableLocalizations = Set(bundle.localizations + tableLocalizations).sorted()
-        let preferredLocalizations = Bundle.preferredLocalizations(
+        // 不能用 Bundle.preferredLocalizations 判断命中：系统语言缺失时它会回退到 en。
+        let bundlePreferred = Bundle.preferredLocalizations(
             from: availableLocalizations,
             forPreferences: preferredLanguages
         )
-        let localizations = preferredLocalizations + availableLocalizations.filter {
-            !preferredLocalizations.contains($0)
+        let localizations = bundlePreferred + availableLocalizations.filter {
+            !bundlePreferred.contains($0)
         }
-        return localizations.flatMap { localization -> [String] in
+
+        var preferred: [String] = []
+        var others: [String] = []
+        for localization in localizations {
             let strings = propertyListDictionary(at: bundle.url(
                 forResource: "InfoPlist",
                 withExtension: "strings",
@@ -187,14 +220,33 @@ public struct SystemApplicationScanner: Sendable {
                 localization: localization
             ))
             let localizedTable = table[localization] as? [String: Any] ?? [:]
-
-            // 首选语言先显示，同语言沿用 strings 的优先级；其余名称作为搜索别名。
-            return [strings, localizedTable].flatMap { info in
+            // 同语言沿用 strings 的优先级。
+            let names = [strings, localizedTable].flatMap { info in
                 [info["CFBundleDisplayName"] as? String, info["CFBundleName"] as? String]
                     .compactMap { $0 }
                     .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             }
+            if matchesSystemLanguage(localization) {
+                preferred.append(contentsOf: names)
+            } else {
+                others.append(contentsOf: names)
+            }
         }
+        return (preferred, others)
+    }
+
+    /// 只比较语言主码：系统语言 zh-Hans-CN 命中 zh_CN / zh-Hans，不命中 en。
+    private func matchesSystemLanguage(_ localization: String) -> Bool {
+        // 取不到系统语言时不做筛选，退化为沿用 Bundle 的语言顺序（否则标题会全部变成包名）。
+        guard !preferredLanguages.isEmpty else { return true }
+        let code = Self.languageCode(localization)
+        guard !code.isEmpty else { return false }
+        return preferredLanguages.contains { Self.languageCode($0) == code }
+    }
+
+    private static func languageCode(_ identifier: String) -> String {
+        ((identifier.replacingOccurrences(of: "_", with: "-").split(separator: "-").first).map(String.init) ?? "")
+            .lowercased()
     }
 
     private func propertyListDictionary(at url: URL?) -> [String: Any] {
@@ -222,7 +274,7 @@ public enum SystemApplicationIndexCache {
     }
 
     // 检索字段和分词规则变化后使旧快照失效，避免继续使用旧拼音键。
-    private static let version = 7
+    private static let version = 9
 
     public static func load(from url: URL, fileManager: FileManager = .default) -> [SystemApplicationDescriptor]? {
         guard fileManager.fileExists(atPath: url.path),

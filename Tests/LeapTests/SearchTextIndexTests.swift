@@ -37,8 +37,11 @@ struct SearchTextIndexTests {
             command: .init(id: "clipboard.history", title: "Clipboard", keywords: ["剪贴板", "Visual Studio Code"]),
             pluginName: "剪切板"
         )
-        for query in ["jqb", "jianqb", "vsc", "clipboard"] {
-            #expect(application.matchRank(for: query) == plugin.keywordMatchRank(for: query))
+        // 本名与插件关键词同级；应用的非首选语言别名（CFBundleName、其它语言 loctable）只做兜底。
+        #expect(application.matchRank(for: "clipboard") == plugin.keywordMatchRank(for: "clipboard"))
+        for query in ["jqb", "jianqb", "vsc"] {
+            #expect(application.matchRank(for: query)
+                == plugin.keywordMatchRank(for: query).map { $0 + SearchMatchRank.aliasOffset })
         }
         #expect(plugin.keywordMatchRank(for: "jtb") != nil)
         #expect(plugin.keywordMatchRank(for: "jqbvsc") == nil)
@@ -54,7 +57,9 @@ struct SearchTextIndexTests {
             alternateNames: ["Visual Studio Code", "Visual Studio Code"]
         )
         #expect(application.alternateNames == ["Visual Studio Code"])
-        #expect(application.matchRank(for: "vsc") == SearchMatchRank.initialsExact.rawValue)
+        // 分词形态只存在于别名里，因此落回兜底梯队。
+        #expect(application.matchRank(for: "vsc")
+            == SearchMatchRank.initialsExact.rawValue + SearchMatchRank.aliasOffset)
         #expect(SearchTextIndex("重庆").pinyin == "chongqing")
     }
 
@@ -63,9 +68,52 @@ struct SearchTextIndexTests {
         let index = SearchTextIndex("剪切板")
         let queries = ["剪切板", "剪切", "切板", "jianqieban", "jianqie", "qieban", "jqb", "jq", "jianqb"]
         let ranks = try queries.map { try #require(index.matchRank(for: $0)) }
-        #expect(ranks == Array(0...8))
+        // 完全匹配一律高于包含：完整首字母（jqb）> 拼音前缀 > 拼音包含。
+        #expect(ranks == [0, 1, 2, 4, 6, 7, 3, 5, 8])
+        #expect(SearchMatchRank.initialsExact.rawValue < SearchMatchRank.pinyinContains.rawValue)
         #expect(SearchMatchRank.mixed.rawValue < SearchMatchRank.identifierExact.rawValue)
         #expect(SearchMatchRank.identifierContains.rawValue < SearchMatchRank.content.rawValue)
+    }
+
+    @Test("完整首字母压过其他名称的拼音子串")
+    func initialsBeatPinyinContains() {
+        let wechat = SearchTextIndex("微信")
+        let preview = SearchTextIndex("预览")
+        let wechatRank = wechat.matchRank(for: "wx")
+        #expect(wechatRank == SearchMatchRank.initialsExact.rawValue)
+        #expect(preview.matchRank(for: "wx") == nil)
+    }
+
+    @Test("非首选语言别名不能压过本名匹配")
+    func primaryNameBeatsLocalizedAliases() {
+        let dictionary = SystemApplicationDescriptor(
+            name: "词典", bundleIdentifier: "com.apple.Dictionary", url: URL(filePath: "/Applications/Dictionary.app"),
+            alternateNames: ["Dictionary", "Wörterbuch", "Diccionario"]
+        )
+        // 德语名的 sync-Dienstprogramm 蕴含 cd 子串，不能因此排到「词典」前面。
+        let colorSync = SystemApplicationDescriptor(
+            name: "色彩同步实用工具", bundleIdentifier: "com.apple.ColorSyncUtility",
+            url: URL(filePath: "/Applications/ColorSync Utility.app"),
+            alternateNames: ["ColorSync-Dienstprogramm"]
+        )
+        let dictionaryRank = dictionary.matchRank(for: "cd")
+        #expect(dictionaryRank == SearchMatchRank.initialsExact.rawValue)
+        #expect((dictionaryRank ?? .max) < (colorSync.matchRank(for: "cd") ?? .max))
+    }
+
+    @Test("非汉字、非拉丁脚本只做字面匹配")
+    func nonLatinScriptsSkipTransliteration() {
+        let thai = SearchTextIndex("แสดงตัวอย่าง")
+        #expect(thai.pinyin.isEmpty)
+        #expect(thai.initials.isEmpty)
+        #expect(thai.matchRank(for: "wx") == nil)
+        #expect(thai.matchRank(for: "แสดงตัวอย่าง") == SearchMatchRank.textExact.rawValue)
+        let cyrillic = SearchTextIndex("Терминал")
+        #expect(cyrillic.pinyin.isEmpty)
+        #expect(cyrillic.matchRank(for: "terminal") == nil)
+        #expect(cyrillic.matchRank(for: "терминал") == SearchMatchRank.textExact.rawValue)
+        // 扩展拉丁字母仍参与转写，只跳过非拉丁脚本。
+        #expect(SearchTextIndex("Straße").pinyin == "strasse")
     }
 
     @Test("内容规则不受名称检索影响，刷新构造新索引")

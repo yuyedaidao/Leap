@@ -18,7 +18,8 @@ private func makeApplication(
     localizedName: String? = nil,
     localizedTable: [String: Any]? = nil,
     isSymbolicLink: Bool = false,
-    packageType: String? = "APPL"
+    packageType: String? = "APPL",
+    infoExtra: [String: Any] = [:]
 ) throws -> URL {
     // 符号链接形态：真实应用藏在隐藏目录里，仅通过一个隐藏符号链接暴露（Safari 的挂载方式）。
     let container = isSymbolicLink
@@ -26,7 +27,7 @@ private func makeApplication(
     let application = try makeBundle(
         named: name, bundleID: bundleID, in: container,
         backgroundOnly: backgroundOnly, localizedName: localizedName, localizedTable: localizedTable,
-        packageType: packageType
+        packageType: packageType, infoExtra: infoExtra
     )
     guard isSymbolicLink else { return application }
     let link = directory.appendingPathComponent("\(name).app", isDirectory: true)
@@ -48,7 +49,8 @@ private func makeBundle(
     backgroundOnly: Bool,
     localizedName: String?,
     localizedTable: [String: Any]?,
-    packageType: String? = "APPL"
+    packageType: String? = "APPL",
+    infoExtra: [String: Any] = [:]
 ) throws -> URL {
     let application = directory.appendingPathComponent("\(name).app", isDirectory: true)
     let contents = application.appendingPathComponent("Contents", isDirectory: true)
@@ -65,6 +67,8 @@ private func makeBundle(
     // nil 复现只缺包类型的系统件（CoreServicesUIAgent 之类）。
     if let packageType { info["CFBundlePackageType"] = packageType }
     if backgroundOnly { info["LSBackgroundOnly"] = true }
+    // 包名与包内名称不一致的真实形态（Xcode-27.2.0.app 的 CFBundleName 是 Xcode）。
+    info.merge(infoExtra) { _, extra in extra }
     let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
     try data.write(to: contents.appendingPathComponent("Info.plist"))
     if let localizedName {
@@ -360,7 +364,7 @@ struct LauncherShellTests {
         let cacheURL = root.appendingPathComponent("index.json")
         try SystemApplicationIndexCache.save(applications, to: cacheURL)
         #expect(SystemApplicationIndexCache.load(from: cacheURL) == applications)
-        for version in [2, 3, 4, 5, 6] {
+        for version in [2, 3, 4, 5, 6, 7, 8] {
             try Data("{\"version\":\(version),\"applications\":[]}".utf8).write(to: cacheURL)
             #expect(SystemApplicationIndexCache.load(from: cacheURL) == nil)
         }
@@ -386,7 +390,8 @@ struct LauncherShellTests {
 
         #expect(application?.name == "微信")
         #expect(application?.matchRank(for: "微信") == 0)
-        #expect(application?.matchRank(for: "WeChat") == 0)
+        // 别名回退：Bundle ID 包含 wechat，本名兜底梯队里标识命中优先。
+        #expect(application?.matchRank(for: "WeChat") == SearchMatchRank.identifierContains.rawValue)
     }
 
     @Test("隐藏符号链接形态的应用仍会被索引")
@@ -440,7 +445,7 @@ struct LauncherShellTests {
         let finder = try #require(applications.first { $0.bundleIdentifier == "com.apple.finder" })
         #expect(finder.name == "访达")
         #expect(finder.matchRank(for: "访达") == 0)
-        #expect(finder.matchRank(for: "finder") == 0)
+        #expect(finder.matchRank(for: "finder") == SearchMatchRank.identifierContains.rawValue)
     }
 
     @Test("统一使用记录迁移旧插件历史，清理只在显式调用时发生")
@@ -523,10 +528,13 @@ extension LauncherShellTests {
             roots: [root], preferredLanguages: ["zh-Hans-CN"]
         ).scan().first)
         #expect(application.name == localizedName)
+        // 显示名与检索名一致（都是中文名），无需额外字段。
+        #expect(application.displayName == nil)
         #expect(application.matchRank(for: localizedName) == 0)
         #expect(application.matchRank(for: String(localizedName.prefix(2))) == 1)
         #expect(application.matchRank(for: String(localizedName.suffix(2))) == 2)
-        #expect(application.matchRank(for: originalName) == 0)
+        // 非首选语言的 CFBundleName 只在没有本名命中时兜底。
+        #expect(application.matchRank(for: originalName) == SearchMatchRank.aliasOffset)
         #expect(application.matchRank(for: pinyin) != nil)
         #expect(application.matchRank(for: initials) != nil)
         #expect(application.alternateNames == [originalName])
@@ -536,7 +544,7 @@ extension LauncherShellTests {
             roots: [root], preferredLanguages: ["en"]
         ).scan().first)
         #expect(englishApplication.name == originalName)
-        #expect(englishApplication.matchRank(for: localizedName) == 0)
+        #expect(englishApplication.matchRank(for: localizedName) == SearchMatchRank.aliasOffset)
     }
 
     @Test("同语言 strings 名称优先，loctable 补充检索别名")
@@ -555,8 +563,10 @@ extension LauncherShellTests {
             roots: [root], preferredLanguages: ["zh-Hans"]
         ).scan().first)
         #expect(application.name == "旧名称")
+        #expect(application.displayName == nil)
         #expect(application.alternateNames == ["Utility", "新名称"])
-        #expect(application.matchRank(for: "新名称") == 0)
+        // loctable 里的同语言别名同样是别名，只做本名之外的回退。
+        #expect(application.matchRank(for: "新名称") == SearchMatchRank.aliasOffset)
     }
 
     @Test("无效 loctable 不影响应用收录和原始名称回退")
@@ -586,6 +596,120 @@ extension LauncherShellTests {
         let applications = SystemApplicationScanner(roots: [root], preferredLanguages: ["zh-Hans-CN"]).scan()
         #expect(applications.map(\.name) == ["Fallback0", "Fallback1", "Fallback2"])
         #expect(applications.allSatisfy { $0.matchRank(for: $0.name) == 0 })
+    }
+
+    @Test("非首选语言的罗马化别名不再命中首字母查询")
+    func systemApplicationScannerIgnoresTransliteratedAliases() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeApplication(
+            named: "Preview",
+            bundleID: "com.apple.Preview",
+            in: root,
+            localizedName: "预览",
+            localizedTable: ["th": ["CFBundleDisplayName": "แสดงตัวอย่าง"]]
+        )
+
+        let application = try #require(
+            SystemApplicationScanner(roots: [root], preferredLanguages: ["zh-Hans"]).scan().first
+        )
+
+        #expect(application.name == "预览")
+        #expect(application.alternateNames.contains("แสดงตัวอย่าง"))
+        // 泰语名的罗马化含 wx，不能因此把「预览」推到「微信」前面。
+        #expect(application.matchRank(for: "wx") == nil)
+        #expect(application.matchRank(for: "แสดงตัวอย่าง") == SearchMatchRank.aliasOffset)
+    }
+
+    @Test("同一目录下同 Bundle ID 的多份副本都保留，且标识唯一")
+    func systemApplicationScannerKeepsSameBundleIDCopies() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // 复现真实形态：包名带版本，包内名称都是 Xcode。
+        let first = try makeApplication(
+            named: "Xcode-27.2.0", bundleID: "com.apple.dt.Xcode", in: root, infoExtra: ["CFBundleName": "Xcode"]
+        )
+        let second = try makeApplication(
+            named: "Xcode-26.6.0", bundleID: "com.apple.dt.Xcode", in: root, infoExtra: ["CFBundleName": "Xcode"]
+        )
+
+        let applications = SystemApplicationScanner(roots: [root]).scan()
+
+        #expect(applications.count == 2)
+        // 结果列表按 id 索引选中与滚动，重复 id 会让第二份不可选。
+        #expect(Set(applications.map(\.id)).count == 2)
+        #expect(
+            Set(applications.map(\.path))
+                == Set([first, second].map { $0.standardizedFileURL.resolvingSymlinksInPath().path })
+        )
+        // 没有本地化名时标题用包名，两份副本才能区分；检索名仍是 Xcode。
+        #expect(applications.map(\.name) == ["Xcode", "Xcode"])
+        #expect(Set(applications.compactMap(\.displayName)) == ["Xcode-27.2.0", "Xcode-26.6.0"])
+        #expect(applications.allSatisfy { $0.matchRank(for: "xcode") == 0 })
+    }
+
+    @Test("取不到系统语言时沿用包内语言顺序，标题不回退成包名")
+    func systemApplicationScannerWithoutPreferredLanguages() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeApplication(named: "Calculator", bundleID: "com.apple.calculator", in: root, localizedName: "计算器")
+
+        let application = try #require(SystemApplicationScanner(
+            roots: [root], preferredLanguages: []
+        ).scan().first)
+        #expect(application.name == "计算器")
+        #expect(application.displayName == nil)
+    }
+
+    @Test("空的 CFBundleDisplayName 不当名称用")
+    func systemApplicationScannerIgnoresEmptyDisplayName() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // Copilot for Xcode 的 CFBundleDisplayName 是空串而不是缺失。
+        _ = try makeApplication(
+            named: "Copilot for Xcode",
+            bundleID: "com.intii.CopilotForXcode",
+            in: root,
+            infoExtra: ["CFBundleDisplayName": ""]
+        )
+
+        let application = try #require(SystemApplicationScanner(roots: [root]).scan().first)
+        #expect(application.name == "Copilot for Xcode")
+        #expect(application.displayName == nil)
+    }
+
+    @Test("本地化文件没有名称键时标题回退到包名")
+    func systemApplicationScannerDisplayNameFallsBackToPackage() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        // VS Code 的分发形态：CFBundleName 是 Code，zh_CN.lproj 存在但不含名称键。
+        _ = try makeApplication(
+            named: "Visual Studio Code",
+            bundleID: "com.microsoft.VSCode",
+            in: root,
+            localizedTable: ["zh_CN": ["CFBundleExecutable": "Electron"]],
+            infoExtra: ["CFBundleName": "Code"]
+        )
+
+        let application = try #require(SystemApplicationScanner(
+            roots: [root], preferredLanguages: ["zh-Hans-CN"]
+        ).scan().first)
+        #expect(application.name == "Code")
+        #expect(application.displayName == "Visual Studio Code")
+        // 检索用短名，不受显示影响。
+        #expect(application.matchRank(for: "code") == 0)
+    }
+
+    @Test("同一目录内的可见符号链接与目标只索引一次")
+    func systemApplicationScannerDeduplicatesPathsWithinRoot() throws {
+        let root = try makeTemporaryPluginDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try makeApplication(named: "Real", bundleID: "com.example.real", in: root)
+        try FileManager.default.createSymbolicLink(
+            atPath: root.appendingPathComponent("Link.app").path, withDestinationPath: "Real.app"
+        )
+
+        #expect(SystemApplicationScanner(roots: [root]).scan().count == 1)
     }
 }
 
@@ -669,7 +793,8 @@ struct SystemApplicationDescriptorTests {
         )
 
         #expect(application.matchRank(for: "微信") == 0)
-        #expect(application.matchRank(for: "WeChat") == 0)
+        // 别名只做兜底：这里 Bundle ID 包含 wechat，标识命中仍在别名之前。
+        #expect(application.matchRank(for: "WeChat") == SearchMatchRank.identifierContains.rawValue)
         #expect(application.matchRank(for: "weixin") != nil)
     }
 }

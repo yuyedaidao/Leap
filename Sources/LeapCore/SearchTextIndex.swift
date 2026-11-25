@@ -3,9 +3,14 @@ import Foundation
 /// 应用和插件共用的相关度；历史记录只参与同等级排序。
 public enum SearchMatchRank: Int, Sendable {
     case textExact, textPrefix, textContains
-    case pinyinExact, pinyinPrefix, pinyinContains
-    case initialsExact, initialsPrefix, mixed
+    // 完整首字母（wx）比拼音子串更强，必须排在拼音前。
+    case initialsExact, pinyinExact, initialsPrefix, pinyinPrefix, pinyinContains
+    case mixed
     case identifierExact, identifierPrefix, identifierContains, content
+
+    /// 非首选语言别名（CFBundleName 与其它语言 loctable）只做兜底，落在所有本名与内容匹配之后。
+    /// 依赖 content 是最后一级；在 content 之后新增等级时需一并复核。
+    public static let aliasOffset = content.rawValue + 1
 }
 
 /// 每个名称独立建索引，避免跨别名拼接；转写和分词不进入按键处理路径。
@@ -29,6 +34,8 @@ public struct SearchTextIndex: Codable, Hashable, Sendable {
         )
         tokens = folded.matches(of: Self.words).flatMap { match -> [String] in
             let word = String(match.output)
+            // 泰文、假名、西里尔等非拉丁脚本的罗马化与用户输入无关，只保留字面匹配。
+            guard word.unicodeScalars.allSatisfy(Self.isTransliterable) else { return [] }
             let latin = word.applyingTransform(.toLatin, reverse: false) ?? word
             if word.unicodeScalars.allSatisfy({ $0.properties.isIdeographic }) {
                 // 整段转写保留多音字的上下文；系统未按字分音节时再逐字回退。
@@ -40,6 +47,12 @@ public struct SearchTextIndex: Codable, Hashable, Sendable {
         }.filter { !$0.isEmpty }
         pinyin = tokens.joined()
         initials = tokens.compactMap(\.first).map(String.init).joined()
+    }
+
+    /// 转写只对拉丁字母与汉字有意义；0x024F 覆盖 Latin-1 补充与 Latin Extended-A/B。
+    /// 这些区段里的 ł、ø、ß、đ 等没有兼容分解，只能靠区段判断。（标准库不提供脚本信息）
+    private static func isTransliterable(_ scalar: Unicode.Scalar) -> Bool {
+        scalar.properties.isIdeographic || scalar.value <= 0x024F
     }
 
     public static func normalize(_ value: String) -> String {
