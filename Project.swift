@@ -28,8 +28,8 @@ let project = Project(
             deploymentTargets: .macOS("26.0"),
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "Leap",
-                "CFBundleShortVersionString": "1.1.0",
-                "CFBundleVersion": "12",
+                "CFBundleShortVersionString": "1.1.1",
+                "CFBundleVersion": "13",
                 "SUFeedURL": "https://github.com/yuyedaidao/Leap/releases/latest/download/appcast.xml",
                 "SUPublicEDKey": "rall1vVcaEkME3Mpr8GMWjJ0teBItxcALE+u9IeymwA=",
                 "SUEnableAutomaticChecks": false,
