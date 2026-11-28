@@ -90,7 +90,7 @@ private struct GlobalShortcutSection: View {
             Text("快捷键必须包含 Command、Option 或 Control；如果系统拒绝注册，将继续使用原来的组合。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Button("恢复默认（⌥⌘L）", action: coordinator.restoreDefaultShortcut)
+            Button("恢复默认（⌥Space）", action: coordinator.restoreDefaultShortcut)
                 .disabled(coordinator.shortcut == .defaultValue)
             if let error = coordinator.shortcutError {
                 SettingsErrorMessage(error)

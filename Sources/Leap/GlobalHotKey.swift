@@ -5,10 +5,11 @@ import Foundation
 import YQLogger
 
 struct HotKeyShortcut: Codable, Equatable, Sendable {
+    // ⌥Space：比 ⌥⌘L 少按一个键，且不与常见 Command 快捷键冲突
     static let defaultValue = HotKeyShortcut(
-        keyCode: UInt32(kVK_ANSI_L),
-        modifiers: UInt32(optionKey | cmdKey),
-        keyLabel: "L"
+        keyCode: UInt32(kVK_Space),
+        modifiers: UInt32(optionKey),
+        keyLabel: "Space"
     )
 
     let keyCode: UInt32
