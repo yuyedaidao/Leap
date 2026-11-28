@@ -13,6 +13,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalHotKey: GlobalHotKey?
     private(set) var settingsCoordinator: SettingsCoordinator?
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // 早于窗口创建设置策略，避免纯启动器形态下程序坞图标先闪一下再消失。
+        let showsDockIcon = DockVisibility().isEnabled
+        NSApp.setActivationPolicy(DockVisibility.activationPolicy(isEnabled: showsDockIcon))
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // 点程序坞图标（或用 Finder 再次打开已在运行的应用）一律唤起启动器；
+        // 系统默认的窗口重开在这里没有可重开的窗口，必须拦住。
+        launcherPanelController?.present()
+        return false
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let savedAppearance = UserDefaults.standard.string(forKey: "appearancePreference")
         applyAppearancePreference(AppearancePreference(rawValue: savedAppearance ?? "") ?? .system)

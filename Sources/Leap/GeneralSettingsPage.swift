@@ -52,6 +52,21 @@ private struct LaunchBehaviorSection: View {
                 SettingsErrorMessage(error)
             }
 
+            Toggle(
+                "在程序坞中显示图标",
+                isOn: Binding(
+                    get: { coordinator.showsDockIcon },
+                    set: { coordinator.setShowsDockIcon($0) }
+                )
+            )
+            .accessibilityIdentifier("settings.showDockIconToggle")
+            Text("关闭后图标会同时从程序坞和 ⌘Tab 中移除，仍可用全局快捷键唤起 Leap。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let error = coordinator.dockVisibilityError {
+                SettingsErrorMessage(error)
+            }
+
             Picker("外观", selection: appearance) {
                 ForEach(AppearancePreference.allCases) { preference in
                     Text(preference.title).tag(preference)

@@ -60,6 +60,7 @@ final class SettingsCoordinator {
     private let launcher: LauncherModel
     private let shortcutStore: HotKeyShortcutStore
     private let applyShortcut: (HotKeyShortcut) throws -> Void
+    private let dockVisibility: DockVisibility
 
     let pluginInstallation: PluginInstallationModel
     let pluginStore: PluginStoreModel
@@ -67,6 +68,8 @@ final class SettingsCoordinator {
     private(set) var shortcutError: String?
     private(set) var loginItemState: LoginItemState
     private(set) var loginItemError: String?
+    private(set) var showsDockIcon: Bool
+    private(set) var dockVisibilityError: String?
     private(set) var isRebuildingApplicationIndex = false
     private(set) var dataMessage: String?
 
@@ -74,13 +77,16 @@ final class SettingsCoordinator {
         paths: AppPaths,
         launcher: LauncherModel,
         shortcutStore: HotKeyShortcutStore = .init(),
+        dockVisibility: DockVisibility = .init(),
         applyShortcut: @escaping (HotKeyShortcut) throws -> Void
     ) {
         self.launcher = launcher
         self.shortcutStore = shortcutStore
+        self.dockVisibility = dockVisibility
         self.applyShortcut = applyShortcut
         shortcut = shortcutStore.load()
         loginItemState = Self.currentLoginItemState()
+        showsDockIcon = dockVisibility.isEnabled
         pluginInstallation = PluginInstallationModel(paths: paths) { [weak launcher] in
             launcher?.reloadPlugins()
         }
@@ -128,6 +134,19 @@ final class SettingsCoordinator {
 
     func openSystemLoginItems() {
         SMAppService.openSystemSettingsLoginItems()
+    }
+
+    /// 策略切换失败时不落盘，避免设置显示关闭但程序坞图标还在。
+    func setShowsDockIcon(_ enabled: Bool) {
+        guard NSApp.setActivationPolicy(DockVisibility.activationPolicy(isEnabled: enabled)) else {
+            Self.logger.error("无法切换程序坞显示方式：系统拒绝了激活策略变更。")
+            dockVisibilityError = "系统拒绝了程序坞显示方式的更改。"
+            showsDockIcon = dockVisibility.isEnabled
+            return
+        }
+        dockVisibility.setEnabled(enabled)
+        showsDockIcon = enabled
+        dockVisibilityError = nil
     }
 
     func clearRecentItems() {
