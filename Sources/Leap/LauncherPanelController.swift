@@ -17,6 +17,8 @@ final class LauncherPanelController {
     private let clock = ContinuousClock()
     private let model: LauncherModel
     private var panel: LauncherPanel?
+    // 空态高度决定落点：上次会话停在长列表时窗口仍很高，直接按它居中会把启动器顶到屏幕上方。
+    private var settledEmptyContentHeight: CGFloat?
     private let pluginWindowController = PluginWebWindowController()
     private var inputWasStandalone = false
 
@@ -88,7 +90,8 @@ final class LauncherPanelController {
         Self.positionForPresentation(
             panel,
             targetDisplayID: targetDisplayID,
-            fallbackLocation: fallbackLocation ?? NSEvent.mouseLocation
+            fallbackLocation: fallbackLocation ?? NSEvent.mouseLocation,
+            panelHeight: settledEmptyContentHeight ?? panel.frame.height
         )
         // 非激活面板可接收键盘输入而不激活 Leap，避免系统按旧窗口归属切换 Space。
         panel.makeKeyAndOrderFront(nil)
@@ -174,9 +177,13 @@ final class LauncherPanelController {
         // 收起面板（Esc、失焦、切设置）一律终止前台 Shell，避免任务在后台静默跑完。
         panel.shellRunDidHide = { [weak model] in model?.exitShellRun() }
         panel.contentView = LauncherHostingView(
-            rootView: LauncherView(model: model) { [weak panel, weak model] height in
+            rootView: LauncherView(model: model) { [weak self, weak panel, weak model] height in
                 guard let panel else {
                     return
+                }
+                // 唤起时会重置回空态，这时的实测高度才是落点基准。
+                if model?.query.isEmpty ?? true, model?.interaction == nil, model?.showsShellRun != true {
+                    self?.settledEmptyContentHeight = ceil(height)
                 }
                 Self.resize(
                     panel,
@@ -196,7 +203,8 @@ final class LauncherPanelController {
     private static func positionForPresentation(
         _ panel: NSWindow,
         targetDisplayID: CGDirectDisplayID?,
-        fallbackLocation: NSPoint
+        fallbackLocation: NSPoint,
+        panelHeight: CGFloat
     ) {
         let targetScreen = targetDisplayID.flatMap { displayID in
             NSScreen.screens.first { $0.leapDisplayID == displayID }
@@ -217,19 +225,25 @@ final class LauncherPanelController {
         logger.debug(
             "启动器屏幕定位：来源=\(source)，目标 ID=\(String(describing: targetDisplayID))，"
                 + "鼠标=\(String(describing: fallbackLocation))，选中 ID=\(String(describing: screen.leapDisplayID))，"
+                + "锚点高度=\(panelHeight)，当前高度=\(panel.frame.height)，"
                 + "可用屏幕=[\(availableScreens)]。"
         )
 
-        let visibleFrame = screen.visibleFrame
-        let targetCenter = NSPoint(
-            x: visibleFrame.midX,
-            y: visibleFrame.maxY - visibleFrame.height * verticalPositionFromTop
-        )
-        panel.setFrameOrigin(
-            NSPoint(
-                x: round(targetCenter.x - panel.frame.width / 2),
-                y: round(targetCenter.y - panel.frame.height / 2)
-            )
+        // 面板已可见时仅作为重新聚焦，不能用锚点高度把长列表瞬间压短。
+        let targetHeight = panel.isVisible ? panel.frame.height : panelHeight
+
+        // 高度与落点一起下发：若先只改原点，遗留的高窗口会被系统夹到屏幕顶端，
+        // 之后的收缩又会把这个被夹住的顶边当作基准保留下来。
+        panel.setFrame(
+            CGRect(
+                origin: LauncherPanelGeometry.centeredOrigin(
+                    screen: screen.visibleFrame,
+                    panelSize: CGSize(width: contentWidth, height: targetHeight),
+                    verticalFraction: verticalPositionFromTop
+                ),
+                size: CGSize(width: contentWidth, height: targetHeight)
+            ),
+            display: false
         )
     }
 
@@ -245,14 +259,14 @@ final class LauncherPanelController {
             return
         }
 
-        var targetFrame = panel.frame
-        // AppKit 坐标原点位于左下角，因此固定 maxY 即可让窗口只向下伸展。
-        targetFrame.origin.y = panel.frame.maxY - targetSize.height
-        targetFrame.size = targetSize
-        if keepWithinScreen, let visibleFrame = panel.screen?.visibleFrame {
-            // 长页面可向上让位，避免固定搜索栏顶边后把底部按钮推到屏幕外。
-            targetFrame.origin.y = max(visibleFrame.minY + 12, targetFrame.origin.y)
-        }
+        let minimumOriginY = keepWithinScreen
+            ? (panel.screen?.visibleFrame).map { $0.minY + 12 }
+            : nil
+        let targetFrame = LauncherPanelGeometry.keepingTopEdge(
+            panel.frame,
+            size: targetSize,
+            clampingTo: minimumOriginY
+        )
         panel.setFrame(targetFrame, display: true, animate: false)
     }
 }
