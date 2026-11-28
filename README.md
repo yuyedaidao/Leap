@@ -4,13 +4,18 @@
 
 **把你的想法变成 Mac 上的一条命令。**
 
-Leap 是一个可以自由添加插件的开源 macOS 启动器。把常用脚本做成命令，或用你熟悉的 AI 编程工具创建插件。装到本机后，按 `⌥⌘L` 就能搜索并运行。
+Leap 是一个可以自由添加插件的开源 macOS 启动器。把常用脚本做成命令，或用你熟悉的 AI 编程工具创建插件。装到本机后，按 `⌥Space` 就能搜索并运行。
 
-**无需注册 Leap 账号 · 不设插件安装数量上限 · 插件保存在本机**
+**无需注册 Leap 账号 · 不设插件安装数量上限 · 官方商店与本地插件都能装**
 
 [下载 Leap](https://github.com/yuyedaidao/Leap/releases/latest) · [浏览现成插件](https://github.com/yuyedaidao/LeapPlugins)
 
-<p align="center"><img src="Docs/media/launcher-screenshot.png" width="720" alt="Leap 启动器界面，显示应用搜索结果与键盘快捷键"></p>
+<p align="center">
+  <a href="https://raw.githubusercontent.com/yuyedaidao/Leap/main/Docs/media/leap-demo.mp4">
+    <img src="Docs/media/leap-demo-poster.png" width="800" alt="Leap 演示视频：搜索应用、用插件定时关机、让 AI 写一个随机密码插件">
+  </a>
+</p>
+<p align="center"><sub>▶ 54 秒演示：搜索任意 App · 插件即命令 · 用 AI 写插件</sub></p>
 
 ## 安装
 
@@ -28,7 +33,10 @@ brew install --cask yuyedaidao/tap/leap
 
 ### 首次使用
 
-按 `⌥⌘L` 呼出搜索框。输入「备忘录」或 `bwl`，回车即可打开应用；插件命令也可以用同样的方式搜索。
+按 `⌥Space` 呼出搜索框，应用和插件命令在同一个框里搜：
+
+- 应用：`jsq`（拼音首字母）、`shizhong`（全拼）、`clock`（英文名）都能命中同一个 App，回车打开
+- 插件命令：已安装的插件就是一条命令，输入 `gj` 直接跑关机插件
 
 设置里的「关于」页可以检查更新，「通用」页可以开关启动时自动检查更新。
 
